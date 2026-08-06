@@ -1,0 +1,65 @@
+{
+  "name": "opencode-browser-cdp",
+  "version": "0.2.0",
+  "description": "OpenCode plugin: headed Chrome browser control via CDP (Puppeteer). Tool name: browser.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "README.ru.md",
+    "README.zh-CN.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node ./node_modules/typescript/bin/tsc -p tsconfig.json",
+    "check": "npm run typecheck && npm test && npm run test:browser",
+    "prepublishOnly": "npm run build",
+    "test": "npm run build && node --test test/exports.test.mjs test/port.test.mjs test/visual.test.mjs",
+    "test:browser": "npm run build && node --test test/browser.test.mjs",
+    "typecheck": "node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
+    "test:exports": "npm run build && node --test test/exports.test.mjs"
+  },
+  "keywords": [
+    "opencode",
+    "plugin",
+    "browser",
+    "cdp",
+    "puppeteer",
+    "chrome",
+    "automation"
+  ],
+  "author": "Vitaly Mironov",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Nor1m/opencode-browser-cdp.git"
+  },
+  "homepage": "https://github.com/Nor1m/opencode-browser-cdp#readme",
+  "bugs": {
+    "url": "https://github.com/Nor1m/opencode-browser-cdp/issues"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.18.0"
+  },
+  "dependencies": {
+    "puppeteer-core": "^24.0.0"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.18.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
