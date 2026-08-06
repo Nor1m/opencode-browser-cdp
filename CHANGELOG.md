@@ -19,6 +19,17 @@
 - Add five dark and five light HUD themes with a persistent in-HUD theme selector.
 - Pin Chrome for Testing in CI, run live Chromium only on Node 22, and report browser
   process diagnostics when CDP startup fails.
+- Submit the HUD prompt with **Enter**, insert a newline with **Shift+Enter**, and drop
+  the send button.
+- Inject submitted HUD guidance as the first (highest-priority) part of the next user
+  message, labeled as a high-priority user instruction rather than a low-trust hint.
+- Replace the right-click Look Here button with an inline comment composer: Enter submits
+  the comment and selected element, while Shift+Enter inserts a newline.
+- Interrupt stale browser actions when guidance is pending, surface guidance directly in
+  tool results, and retain the focus ring on the last operated form field.
+- Suppress Chrome first-run, default-browser, crash-restore, notification, translation,
+  password-onboarding, and other startup prompts; close extra startup-only tabs after CDP
+  becomes ready.
 
 ## 0.2.0 - 2026-08-06
 

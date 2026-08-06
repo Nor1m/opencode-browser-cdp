@@ -194,6 +194,15 @@ export async function ensureChrome({
     `--user-data-dir=${PROFILE_DIR}`,
     "--no-first-run",
     "--no-default-browser-check",
+    "--noerrdialogs",
+    "--disable-infobars",
+    "--disable-notifications",
+    "--disable-prompt-on-repost",
+    "--disable-search-engine-choice-screen",
+    "--disable-session-crashed-bubble",
+    "--hide-crash-restore-bubble",
+    "--disable-background-mode",
+    "--disable-features=ChromeWhatsNewUI,DefaultBrowserPrompt,MediaRouter,Translate,PasswordManagerOnboarding,PasswordLeakDetection",
     "--disable-sync",
     "--window-size=1400,900",
     "about:blank",
@@ -228,6 +237,7 @@ export async function ensureChrome({
     await new Promise((r) => setTimeout(r, 300))
     const v = await isCdpUp(port)
     if (v) {
+      await closeStartupPages(port)
       saveState({ browser: v.Browser, pid: child.pid, profile: PROFILE_DIR })
       return {
         ok: true as const,
@@ -252,6 +262,36 @@ export async function ensureChrome({
     error: `Browser launched but CDP :${port} not ready${diagnostic ? ` (${diagnostic})` : ""}`,
     chrome,
     pid: child.pid,
+  }
+}
+
+async function closeStartupPages(port: number): Promise<void> {
+  try {
+    const response = await fetch(`${cdpBase(port)}/json/list`, {
+      signal: AbortSignal.timeout(3000),
+    })
+    const pages = ((await response.json()) as Array<{ id: string; type: string; url: string }>)
+      .filter((target) => target.type === "page")
+    if (pages.length < 2) return
+    const isStartupPage = (url: string) =>
+      url === "about:blank" ||
+      url.startsWith("chrome://welcome") ||
+      url.startsWith("chrome://newtab") ||
+      url.startsWith("chrome://new-tab-page") ||
+      url.startsWith("chrome://whats-new")
+    const startupPages = pages.filter((page) => isStartupPage(page.url))
+    const keep = startupPages.find((page) => page.url === "about:blank") ?? startupPages[0]
+    await Promise.allSettled(
+      startupPages
+        .filter((page) => page.id !== keep?.id)
+        .map((page) =>
+          fetch(`${cdpBase(port)}/json/close/${encodeURIComponent(page.id)}`, {
+            signal: AbortSignal.timeout(3000),
+          }),
+        ),
+    )
+  } catch {
+    /* Startup cleanup is best-effort and must never block CDP startup. */
   }
 }
 
@@ -528,28 +568,43 @@ function verifiedGuidance(
 }
 
 export async function collectGhostGuidance(consume = false): Promise<GhostGuidance | null> {
-  const guidance: GhostGuidance[] = []
+  const candidates: Array<{ page: Page; value: SignedGhostGuidance; guidance: GhostGuidance }> = []
   for (const { browser } of browsers.values()) {
     if (!browser.connected) continue
     const pages = await browser.pages().catch(() => [])
     await Promise.allSettled(pages.filter(isToolPage).map((page) => syncGhostTheme(page)))
     const values = await Promise.all(
-      pages.filter(isToolPage).map((page) =>
-        page
+      pages.filter(isToolPage).map(async (page) => ({
+        page,
+        value: await page
           .evaluate(({ owner, consume }) => {
             const runtime = (window as Window & { __opencodeBrowserGhost?: GhostRuntime })
               .__opencodeBrowserGhost
             return runtime?.owner === owner ? runtime.guidance(consume) : null
-          }, { owner: GHOST_OWNER, consume })
+          }, { owner: GHOST_OWNER, consume: false })
           .catch(() => null),
-      ),
+      })),
     )
-    for (const value of values) {
-      const verified = verifiedGuidance(value, consume)
-      if (verified) guidance.push(verified)
+    for (const { page, value } of values) {
+      const verified = verifiedGuidance(value, false)
+      if (value && verified) candidates.push({ page, value, guidance: verified })
     }
   }
-  return guidance.sort((left, right) => right.updatedAt - left.updatedAt)[0] ?? null
+  const selected = candidates.sort(
+    (left, right) => left.guidance.updatedAt - right.guidance.updatedAt,
+  )[0]
+  if (!selected) return null
+  if (!consume) return selected.guidance
+
+  const consumed = await selected.page
+    .evaluate(({ owner, signature }) => {
+      const runtime = (window as Window & { __opencodeBrowserGhost?: GhostRuntime })
+        .__opencodeBrowserGhost
+      return runtime?.owner === owner ? runtime.guidance(true, signature) : null
+    }, { owner: GHOST_OWNER, signature: selected.value.signature })
+    .catch(() => null)
+  if (consumed?.signature !== selected.value.signature) return null
+  return verifiedGuidance(consumed, true)
 }
 
 export async function withPage<T>(

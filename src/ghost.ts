@@ -61,7 +61,7 @@ export type GhostRuntime = {
   mount: () => boolean
   update: (next: GhostUpdate) => Promise<boolean>
   actionDelay: () => number
-  guidance: (consume?: boolean) => SignedGhostGuidance | null
+  guidance: (consume?: boolean, expectedSignature?: string) => SignedGhostGuidance | null
   theme: () => GhostThemePreference
   setTheme: (preference: GhostThemePreference) => boolean
   restoreFocus: () => boolean
@@ -105,6 +105,11 @@ export const GHOST_SOURCE = (config: {
     id: number
     kind: "instruction" | "target"
     text: string
+    instruction?: string
+    target?: GhostGuidanceTarget
+    url?: string
+    title?: string
+    updatedAt?: number
     status: "pending" | "sent"
   }
 
@@ -123,12 +128,6 @@ export const GHOST_SOURCE = (config: {
   let tasks: GhostTask[] = []
   let target: GhostTarget | undefined
   let actionDelay = config.actionDelay
-  let guidance: GhostGuidance = {
-    instruction: "",
-    url: "",
-    title: "",
-    updatedAt: 0,
-  }
   let promptDraft = ""
   let wishes: GhostWish[] = []
   let storedGuidance: SignedGhostGuidance | null = null
@@ -142,6 +141,8 @@ export const GHOST_SOURCE = (config: {
         prompt: "Доп. пожелание для ИИ…",
         send: "Отправить пожелание",
         lookHere: "Смотри сюда",
+        contextPlaceholder: "Что здесь важно?",
+        contextHint: "Enter — отправить · Shift+Enter — новая строка",
         pace: "Скорость",
         theme: "Тема",
       },
@@ -149,6 +150,8 @@ export const GHOST_SOURCE = (config: {
       prompt: "Additional instruction for AI…",
       send: "Send instruction",
       lookHere: "Look here",
+      contextPlaceholder: "What should I look at?",
+      contextHint: "Enter to send · Shift+Enter for a new line",
       pace: "Pace",
       theme: "Theme",
     },
@@ -156,6 +159,8 @@ export const GHOST_SOURCE = (config: {
       prompt: "给 AI 的附加指令…",
       send: "发送指令",
       lookHere: "看这里",
+      contextPlaceholder: "这里需要关注什么？",
+      contextHint: "Enter 发送 · Shift+Enter 换行",
       pace: "速度",
       theme: "主题",
     },
@@ -223,6 +228,15 @@ export const GHOST_SOURCE = (config: {
           id: Number.isFinite(wish.id) ? wish.id : Date.now() + index,
           kind: wish.kind === "target" ? "target" as const : "instruction" as const,
           text: wish.text.slice(0, 240),
+          instruction:
+            typeof wish.instruction === "string" ? wish.instruction.slice(0, 2000) : undefined,
+          target:
+            wish.target && typeof wish.target.selector === "string"
+              ? { ...wish.target, selector: wish.target.selector.slice(0, 2000) }
+              : undefined,
+          url: typeof wish.url === "string" ? wish.url : undefined,
+          title: typeof wish.title === "string" ? wish.title : undefined,
+          updatedAt: Number.isFinite(wish.updatedAt) ? Number(wish.updatedAt) : undefined,
           status: wish.status === "pending" ? "pending" as const : "sent" as const,
         }))
         .slice(-8)
@@ -253,15 +267,23 @@ export const GHOST_SOURCE = (config: {
     /* storage is unavailable on some internal and opaque origins */
   }
 
+  const guidanceForWish = (wish: GhostWish | undefined): GhostGuidance | null => {
+    const instruction = wish?.instruction?.trim() || ""
+    if (!wish || (!instruction && !wish.target)) return null
+    return {
+      instruction,
+      target: wish.target ? { ...wish.target } : undefined,
+      url: wish.url || location.href,
+      title: wish.title || document.title,
+      updatedAt: wish.updatedAt || wish.id,
+    }
+  }
+
+  const nextGuidance = () => guidanceForWish(wishes.find((wish) => wish.status === "pending"))
+
   const save = () => {
     try {
-      const current = guidance.instruction.trim() || guidance.target
-        ? {
-            ...guidance,
-            instruction: guidance.instruction.trim(),
-            target: guidance.target ? { ...guidance.target } : undefined,
-          }
-        : null
+      const current = nextGuidance()
       const pendingGuidance = current
         ? { guidance: current, signature: signGuidance(current) }
         : undefined
@@ -400,11 +422,26 @@ export const GHOST_SOURCE = (config: {
     return btoa(String.fromCharCode(...sha256(outer)))
   }
 
-  if (
-    storedGuidance &&
-    storedGuidance.signature === signGuidance(storedGuidance.guidance)
-  ) {
-    guidance = storedGuidance.guidance
+  if (storedGuidance && storedGuidance.signature === signGuidance(storedGuidance.guidance)) {
+    const pending = [...wishes].reverse().find((wish) => wish.status === "pending")
+    if (pending) {
+      pending.target ??= storedGuidance.guidance.target
+      pending.url ??= storedGuidance.guidance.url
+      pending.title ??= storedGuidance.guidance.title
+      pending.updatedAt ??= storedGuidance.guidance.updatedAt
+    } else {
+      wishes.push({
+        id: storedGuidance.guidance.updatedAt,
+        kind: storedGuidance.guidance.target ? "target" : "instruction",
+        text: storedGuidance.guidance.instruction.slice(0, 240),
+        instruction: storedGuidance.guidance.instruction,
+        target: storedGuidance.guidance.target,
+        url: storedGuidance.guidance.url,
+        title: storedGuidance.guidance.title,
+        updatedAt: storedGuidance.guidance.updatedAt,
+        status: "pending",
+      })
+    }
   }
   storedGuidance = null
 
@@ -508,7 +545,6 @@ export const GHOST_SOURCE = (config: {
       })
       localeSwitch.appendChild(button)
     }
-    add(root, "span", "hud-count", "display:none;color:#71717a;font-size:10px", head)
     head.addEventListener("pointerdown", (event) => {
       if (event.button !== 0) return
       const rect = hud.getBoundingClientRect()
@@ -545,14 +581,14 @@ export const GHOST_SOURCE = (config: {
       root,
       "div",
       "tasks",
-      "display:grid;gap:1px;padding:4px 6px;max-height:220px;overflow:hidden;box-sizing:border-box",
+      "display:grid;gap:1px;padding:4px 6px;max-height:220px;overflow-y:auto;scrollbar-width:thin;box-sizing:border-box",
       hud,
     )
     const guidancePanel = add(
       root,
       "div",
       "guidance",
-      "display:grid;gap:6px;padding:8px;border-top:1px solid #27272a;box-sizing:border-box",
+      "display:grid;gap:6px;padding:8px;border-top:1px solid rgba(127,127,127,.16);box-sizing:border-box",
       hud,
     )
     const prompt = document.createElement("textarea")
@@ -566,52 +602,44 @@ export const GHOST_SOURCE = (config: {
       promptDraft = prompt.value.slice(0, 2000)
       save()
     })
-    const guidanceActions = document.createElement("div")
-    guidanceActions.style.cssText = "display:flex;gap:6px;align-items:center"
-    const send = document.createElement("button")
-    send.id = "send-guidance"
-    send.type = "button"
-    send.textContent = labels.send
-    send.style.cssText =
-      "margin-left:auto;padding:6px 9px;color:#0d0d0d;background:#f4f4f5;border:0;border-radius:5px;cursor:pointer;font:700 11px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace"
-    send.addEventListener("click", (event) => {
-      if (!event.isTrusted) return
+    const submitPrompt = () => {
       const instruction = prompt.value.trim()
       if (!instruction) return
+      const submittedAt = Date.now()
       wishes = [
         ...wishes,
         {
-          id: Date.now(),
+          id: submittedAt,
           kind: "instruction",
           text: instruction.slice(0, 240),
+          instruction,
+          url: location.href,
+          title: document.title,
+          updatedAt: submittedAt,
           status: "pending",
         } as GhostWish,
       ].slice(-8)
-      const pendingInstructions = wishes
-        .filter((wish) => wish.kind === "instruction" && wish.status === "pending")
-        .map((wish) => wish.text)
-      guidance = {
-        ...guidance,
-        instruction: pendingInstructions.join("\n"),
-        url: location.href,
-        title: document.title,
-        updatedAt: Date.now(),
-      }
       promptDraft = ""
       prompt.value = ""
       save()
       syncGuidance(root)
+    }
+    prompt.addEventListener("keydown", (event) => {
+      if (!event.isTrusted) return
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault()
+        submitPrompt()
+      }
     })
-    guidanceActions.append(send)
     const wishesElement = document.createElement("div")
     wishesElement.id = "wishes"
     wishesElement.style.cssText = "display:none;gap:3px"
-    guidancePanel.append(prompt, guidanceActions, wishesElement)
+    guidancePanel.append(prompt, wishesElement)
     const themeSettings = add(
       root,
       "label",
       "theme-row",
-      "display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:center;padding:7px 9px;border-top:1px solid #27272a;box-sizing:border-box",
+      "display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:center;padding:7px 9px;border-top:1px solid rgba(127,127,127,.16);box-sizing:border-box",
       hud,
     )
     const themeLabel = document.createElement("span")
@@ -653,7 +681,7 @@ export const GHOST_SOURCE = (config: {
       root,
       "label",
       "pace",
-      "display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;padding:7px 9px;color:#71717a;border-top:1px solid #27272a;pointer-events:auto;box-sizing:border-box",
+      "display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;padding:7px 9px;color:#71717a;border-top:1px solid rgba(127,127,127,.16);pointer-events:auto;box-sizing:border-box",
       hud,
     )
     const paceLabel = document.createElement("span")
@@ -685,34 +713,43 @@ export const GHOST_SOURCE = (config: {
       root,
       "div",
       "context-menu",
-      "display:none;position:fixed;left:0;top:0;z-index:4;padding:4px;color:#e4e4e7;background:#0d0d0d;border:1px solid #3f3f46;border-radius:6px;box-shadow:0 10px 24px rgba(0,0,0,.4);pointer-events:auto;box-sizing:border-box",
+      "display:none;position:fixed;left:0;top:0;z-index:4;width:min(280px,calc(100vw - 16px));padding:8px;color:#e4e4e7;background:#0d0d0d;border:1px solid #3f3f46;border-radius:5px;box-shadow:0 10px 24px rgba(0,0,0,.4);pointer-events:auto;box-sizing:border-box",
     )
-    const lookHere = document.createElement("button")
-    lookHere.id = "context-look-here"
-    lookHere.type = "button"
-    lookHere.textContent = labels.lookHere
-    lookHere.style.cssText =
-      "display:block;width:100%;padding:6px 9px;color:#e4e4e7;background:transparent;border:0;border-radius:4px;cursor:pointer;text-align:left;font:600 12px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:nowrap"
-    lookHere.addEventListener("pointerenter", () => {
-      lookHere.style.background = themeSets[uiTheme].surface
-    })
-    lookHere.addEventListener("pointerleave", () => {
-      lookHere.style.background = "transparent"
-    })
-    lookHere.addEventListener("click", (event) => {
-      if (!event.isTrusted || !contextCandidate) return
+    const contextTitle = document.createElement("div")
+    contextTitle.id = "context-title"
+    contextTitle.textContent = labels.lookHere
+    contextTitle.style.cssText =
+      "margin-bottom:6px;font:700 11px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace"
+    const contextComment = document.createElement("textarea")
+    contextComment.id = "context-comment"
+    contextComment.rows = 2
+    contextComment.maxLength = 2000
+    contextComment.placeholder = labels.contextPlaceholder
+    contextComment.style.cssText =
+      "display:block;width:100%;min-height:54px;max-height:120px;resize:vertical;padding:7px 8px;border:1px solid;border-radius:4px;outline:none;font:11px/1.35 ui-monospace,SFMono-Regular,Consolas,monospace;box-sizing:border-box"
+    const contextHint = document.createElement("div")
+    contextHint.id = "context-hint"
+    contextHint.textContent = labels.contextHint
+    contextHint.style.cssText = "margin-top:5px;font:9px/1.3 ui-monospace,monospace"
+    contextComment.addEventListener("keydown", (event) => {
+      if (!event.isTrusted || event.key !== "Enter" || event.shiftKey || !contextCandidate) return
       event.preventDefault()
       event.stopPropagation()
-      selectContextTarget(root, contextCandidate)
+      const comment = contextComment.value.trim()
+      if (!comment) return
+      selectContextTarget(root, contextCandidate, comment)
+      contextComment.value = ""
       contextCandidate = null
       contextMenu.style.display = "none"
     })
-    contextMenu.appendChild(lookHere)
+    contextMenu.append(contextTitle, contextComment, contextHint)
 
     const closeContextMenu = (event?: Event) => {
       if (event && event.composedPath().includes(contextMenu)) return
+      if (event instanceof MouseEvent && event.button !== 0) return
       contextCandidate = null
       contextMenu.style.display = "none"
+      clearFocusHighlight(root)
     }
     const openContextMenu = (event: MouseEvent) => {
       if (!event.isTrusted || event.composedPath().includes(host)) return
@@ -731,6 +768,8 @@ export const GHOST_SOURCE = (config: {
       contextMenu.style.top = `${Math.max(0, y)}px`
       contextMenu.style.visibility = "visible"
       previewElement(root, element, labels.lookHere)
+      contextComment.value = ""
+      requestAnimationFrame(() => contextComment.focus())
     }
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") closeContextMenu()
@@ -778,32 +817,28 @@ export const GHOST_SOURCE = (config: {
     hud.style.borderColor = palette.line
     hud.style.boxShadow = palette.shadow
     ;(root.getElementById("hud-title") as HTMLElement).style.color = palette.fg
-    ;(root.getElementById("hud-count") as HTMLElement).style.color = palette.muted
     const localeSwitch = root.getElementById("locale-switch") as HTMLElement
     localeSwitch.style.background = palette.surface
     localeSwitch.style.borderColor = palette.line
     const progress = root.getElementById("progress") as HTMLElement
     progress.style.background = palette.surface
     ;(root.getElementById("progress-bar") as HTMLElement).style.background = palette.fg
+    const innerLine = `color-mix(in srgb, ${palette.fg} 10%, transparent)`
     for (const id of ["tasks", "guidance", "theme-row", "pace"]) {
       const element = root.getElementById(id) as HTMLElement | null
-      if (element) element.style.borderColor = palette.line
+      if (element) element.style.borderColor = innerLine
     }
     const prompt = root.getElementById("guidance-prompt") as HTMLTextAreaElement
     prompt.style.color = palette.fg
     prompt.style.background = palette.surface
-    prompt.style.borderColor = palette.line
-    const send = root.getElementById("send-guidance") as HTMLButtonElement
-    send.style.color = palette.buttonFg
-    send.style.background = palette.button
-    send.style.borderColor = palette.button
+    prompt.style.borderColor = innerLine
     const themeLabel = root.getElementById("theme-label") as HTMLElement
     themeLabel.style.color = palette.muted
     const themeSelect = root.getElementById("theme-select") as HTMLSelectElement
     themeSelect.value = uiTheme
     themeSelect.style.color = palette.fg
     themeSelect.style.background = palette.surface
-    themeSelect.style.borderColor = palette.line
+    themeSelect.style.borderColor = innerLine
     const pace = root.getElementById("pace") as HTMLElement
     pace.style.color = palette.muted
     ;(root.getElementById("pace-value") as HTMLElement).style.color = palette.muted
@@ -812,7 +847,12 @@ export const GHOST_SOURCE = (config: {
     menu.style.color = palette.fg
     menu.style.background = palette.bg
     menu.style.borderColor = palette.line
-    ;(root.getElementById("context-look-here") as HTMLButtonElement).style.color = palette.fg
+    ;(root.getElementById("context-title") as HTMLElement).style.color = palette.fg
+    const contextComment = root.getElementById("context-comment") as HTMLTextAreaElement
+    contextComment.style.color = palette.fg
+    contextComment.style.background = palette.surface
+    contextComment.style.borderColor = innerLine
+    ;(root.getElementById("context-hint") as HTMLElement).style.color = palette.muted
     const focus = root.getElementById("focus") as HTMLElement
     focus.style.borderColor = palette.fg
     focus.style.boxShadow = `0 0 0 2px ${palette.bg}`
@@ -836,27 +876,59 @@ export const GHOST_SOURCE = (config: {
       done: palette.muted,
       failed: palette.fg,
     }
-    for (const task of tasks) {
+    const finished = (t: GhostTask) => t.status === "done" || t.status === "failed"
+    const statusGlyph: Record<GhostTaskStatus, string> = {
+      queued: "",
+      running: "",
+      done: "✓",
+      failed: "✕",
+    }
+    const order = [...tasks].sort((a, b) => Number(finished(a)) - Number(finished(b)))
+    for (const task of order) {
+      const done = finished(task)
       const row = document.createElement("div")
       row.dataset.status = task.status
       row.style.cssText =
-        "display:grid;grid-template-columns:14px 1fr;gap:7px;align-items:start;padding:6px;border-radius:5px;box-sizing:border-box"
+        "display:grid;grid-template-columns:14px 1fr 14px;gap:7px;align-items:center;padding:6px;border-radius:5px;box-sizing:border-box"
       if (task.status === "running") row.style.background = palette.surface
+      if (done) row.style.opacity = "0.45"
       row.style.color = colors[task.status]
       const dot = document.createElement("span")
-      dot.style.cssText = `width:8px;height:8px;margin-top:4px;border:1px solid ${colors[task.status]};border-radius:50%;box-sizing:border-box`
-      if (task.status !== "queued") dot.style.background = colors[task.status]
+      dot.style.cssText = `width:8px;height:8px;border:1px solid ${colors[task.status]};border-radius:50%;box-sizing:border-box;display:flex;align-items:center;justify-content:center;font:700 8px/1 ui-monospace,monospace`
+      const glyph = statusGlyph[task.status]
+      if (glyph) {
+        dot.textContent = glyph
+        dot.style.borderColor = "transparent"
+        dot.style.background = "transparent"
+        dot.style.color = task.status === "done" ? palette.fg : palette.muted
+      } else if (task.status !== "queued") {
+        dot.style.background = colors[task.status]
+      }
       const label = document.createElement("span")
       label.style.cssText = "overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+      if (done) label.style.textDecoration = "line-through"
       label.textContent = task.label
       row.append(dot, label)
+      if (done) {
+        const remove = document.createElement("button")
+        remove.type = "button"
+        remove.textContent = "×"
+        remove.title = "Remove finished task"
+        remove.style.cssText =
+          "padding:0 0 0 2px;color:inherit;background:transparent;border:0;border-radius:3px;cursor:pointer;font:700 12px/1 ui-monospace,monospace"
+        remove.addEventListener("pointerdown", (event) => event.stopPropagation())
+        remove.addEventListener("click", (event) => {
+          if (!event.isTrusted) return
+          tasks = tasks.filter((item) => item.id !== task.id)
+          save()
+          renderTasks(root)
+        })
+        row.appendChild(remove)
+      }
       tasksElement.appendChild(row)
     }
-    const complete = tasks.filter((task) => task.status === "done" || task.status === "failed").length
-    const count = root.getElementById("hud-count") as HTMLElement
-    count.textContent = tasks.length > 0 ? `${complete}/${tasks.length}` : ""
-    count.style.display = tasks.length > 0 ? "inline" : "none"
     const bar = root.getElementById("progress-bar") as HTMLElement
+    const complete = order.filter(finished).length
     bar.style.width = tasks.length > 0 ? `${Math.round((complete / tasks.length) * 100)}%` : "0%"
   }
 
@@ -883,15 +955,17 @@ export const GHOST_SOURCE = (config: {
 
   const syncStaticLabels = (root: ShadowRoot) => {
     const prompt = root.getElementById("guidance-prompt") as HTMLTextAreaElement | null
-    const send = root.getElementById("send-guidance") as HTMLButtonElement | null
     const pace = root.querySelector("#pace > span") as HTMLElement | null
     const themeLabel = root.getElementById("theme-label") as HTMLElement | null
-    const lookHere = root.getElementById("context-look-here") as HTMLButtonElement | null
+    const contextTitle = root.getElementById("context-title") as HTMLElement | null
+    const contextComment = root.getElementById("context-comment") as HTMLTextAreaElement | null
+    const contextHint = root.getElementById("context-hint") as HTMLElement | null
     if (prompt) prompt.placeholder = labels.prompt
-    if (send) send.textContent = labels.send
     if (pace) pace.textContent = labels.pace
     if (themeLabel) themeLabel.textContent = labels.theme
-    if (lookHere) lookHere.textContent = labels.lookHere
+    if (contextTitle) contextTitle.textContent = labels.lookHere
+    if (contextComment) contextComment.placeholder = labels.contextPlaceholder
+    if (contextHint) contextHint.textContent = labels.contextHint
     for (const button of root.querySelectorAll<HTMLButtonElement>("#locale-switch [data-locale]")) {
       const active = button.dataset.locale === uiLocale
       const palette = themeSets[uiTheme]
@@ -913,6 +987,16 @@ export const GHOST_SOURCE = (config: {
     cursor.style.opacity = "1"
     cursorPosition = { x, y }
     if (persist) save()
+  }
+
+  const clearFocusHighlight = (root: ShadowRoot) => {
+    const focus = root.getElementById("focus") as HTMLElement
+    focus.style.opacity = "0"
+    const cursor = root.getElementById("cursor") as HTMLElement
+    cursor.style.opacity = "0"
+    target = undefined
+    contextCandidate = null
+    save()
   }
 
   const previewElement = (root: ShadowRoot, element: Element, label: string) => {
@@ -960,35 +1044,35 @@ export const GHOST_SOURCE = (config: {
     return parts.join(" > ")
   }
 
-  const selectContextTarget = (root: ShadowRoot, element: Element) => {
+  const selectContextTarget = (root: ShadowRoot, element: Element, comment: string) => {
     const selector = selectorFor(element)
     const text = ((element as HTMLElement).innerText || element.textContent || "")
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, 1000)
+    const guidanceTarget = {
+      selector,
+      tag: element.tagName.toLowerCase(),
+      role: element.getAttribute("role") || "",
+      ariaLabel: element.getAttribute("aria-label") || "",
+      text,
+      html: element.outerHTML.slice(0, 2000),
+    }
+    const submittedAt = Date.now()
     wishes = [
       ...wishes,
       {
-        id: Date.now(),
+        id: submittedAt,
         kind: "target",
-        text: `${labels.lookHere}: ${text || selector}`.slice(0, 240),
+        text: `${labels.lookHere}: ${comment}`.slice(0, 240),
+        instruction: comment,
+        target: guidanceTarget,
+        url: location.href,
+        title: document.title,
+        updatedAt: submittedAt,
         status: "pending",
       } as GhostWish,
     ].slice(-8)
-    guidance = {
-      instruction: guidance.instruction,
-      target: {
-        selector,
-        tag: element.tagName.toLowerCase(),
-        role: element.getAttribute("role") || "",
-        ariaLabel: element.getAttribute("aria-label") || "",
-        text,
-        html: element.outerHTML.slice(0, 2000),
-      },
-      url: location.href,
-      title: document.title,
-      updatedAt: Date.now(),
-    }
     target = { selector, label: labels.lookHere }
     previewElement(root, element, labels.lookHere)
     const rect = element.getBoundingClientRect()
@@ -1135,25 +1219,15 @@ export const GHOST_SOURCE = (config: {
       return highlight()
     },
     actionDelay: () => actionDelay,
-    guidance: (consume = false) => {
-      if (!guidance.instruction.trim() && !guidance.target) return null
-      const value = {
-        ...guidance,
-        instruction: guidance.instruction.trim(),
-        target: guidance.target ? { ...guidance.target } : undefined,
-      }
+    guidance: (consume = false, expectedSignature) => {
+      const wish = wishes.find((item) => item.status === "pending")
+      const value = guidanceForWish(wish)
+      if (!wish || !value) return null
       const result = { guidance: value, signature: signGuidance(value) }
-      if (consume) {
+      if (consume && (!expectedSignature || expectedSignature === result.signature)) {
         wishes = wishes.map((wish) =>
-          wish.status === "pending" ? { ...wish, status: "sent" as const } : wish,
+          wish.id === value.updatedAt ? { ...wish, status: "sent" as const } : wish,
         )
-        guidance = {
-          instruction: "",
-          url: location.href,
-          title: document.title,
-          updatedAt: Date.now(),
-        }
-        target = undefined
         const root = findHost()?.shadowRoot
         if (root) syncGuidance(root)
         save()

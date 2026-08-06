@@ -305,9 +305,8 @@ test("live Chromium integration", async (t) => {
             scrollY: window.scrollY,
             targetCenter: targetRect.top + targetRect.height / 2,
             viewportCenter: window.innerHeight / 2,
-            pointerEvents: host.style.pointerEvents,
+pointerEvents: host.style.pointerEvents,
             hud: root.querySelector("#hud").textContent,
-            count: root.querySelector("#hud-count").textContent,
             focusOpacity: root.querySelector("#focus").style.opacity,
             focusLabel: root.querySelector("#focus-label").textContent,
             cursorOpacity: root.querySelector("#cursor").style.opacity,
@@ -325,7 +324,6 @@ test("live Chromium integration", async (t) => {
     )
     assert.equal(state.pointerEvents, "none")
     assert.match(state.hud, /Fill offscreen account field/)
-    assert.equal(state.count, "1/1")
     assert.equal(state.focusOpacity, "1")
     assert.equal(state.focusLabel, "Fill offscreen account field")
     assert.equal(state.cursorOpacity, "1")
@@ -390,57 +388,61 @@ test("live Chromium integration", async (t) => {
           window.fixedPointerUp = false
           window.fixedAuxClick = false
         })
-        const controls = await page.evaluate(() => {
+const controls = await page.evaluate(() => {
           const root = document.querySelector("[data-opencode-browser-owner]").shadowRoot
           const prompt = root.querySelector("#guidance-prompt").getBoundingClientRect()
-          const send = root.querySelector("#send-guidance").getBoundingClientRect()
           return {
             prompt: { x: prompt.x + prompt.width / 2, y: prompt.y + prompt.height / 2 },
-            send: { x: send.x + send.width / 2, y: send.y + send.height / 2 },
           }
         })
         await page.mouse.click(controls.prompt.x, controls.prompt.y)
         await page.keyboard.type("Проверь именно эту кнопку")
-        await page.evaluate(() => {
-          const send = document
-            .querySelector("[data-opencode-browser-owner]")
-            .shadowRoot.querySelector("#send-guidance")
-          send.click()
-        })
+        await page.keyboard.press("Enter")
       },
       { port },
     )
-    assert.equal(await api.collectGhostGuidance(), null)
+    assert.notEqual(await api.collectGhostGuidance(), null)
 
     const picked = await api.withPage(
       async (page) => {
-        await page.evaluate(() => {
+        const forged = await page.evaluate(() => {
           const prompt = document
             .querySelector("[data-opencode-browser-owner]")
             .shadowRoot.querySelector("#guidance-prompt")
           prompt.value = "FORGED"
-          prompt.dispatchEvent(new Event("input", { bubbles: true }))
-          prompt.value = "Проверь именно эту кнопку"
+          prompt.dispatchEvent(
+            new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+          )
+          const wishes = [
+            ...document
+              .querySelector("[data-opencode-browser-owner]")
+              .shadowRoot.querySelectorAll("#wishes [data-status]"),
+          ].map((element) => element.textContent)
+          prompt.value = ""
+          return wishes
         })
+        assert.equal(forged.some((text) => text.includes("FORGED")), false)
         const controls = await page.evaluate(() => {
           const root = document.querySelector("[data-opencode-browser-owner]").shadowRoot
-          const send = root.querySelector("#send-guidance").getBoundingClientRect()
           const target = document.querySelector("#fixed").getBoundingClientRect()
           return {
-            send: { x: send.x + send.width / 2, y: send.y + send.height / 2 },
             target: { x: target.x + target.width / 2, y: target.y + target.height / 2 },
           }
         })
-        await page.mouse.click(controls.send.x, controls.send.y)
         await page.mouse.click(controls.target.x, controls.target.y, { button: "right" })
         const menu = await page.evaluate(() => {
-          const item = document
-            .querySelector("[data-opencode-browser-owner]")
-            .shadowRoot.querySelector("#context-look-here")
-          const rect = item.getBoundingClientRect()
-          return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, text: item.textContent }
+          const root = document.querySelector("[data-opencode-browser-owner]").shadowRoot
+          const comment = root.querySelector("#context-comment")
+          const rect = comment.getBoundingClientRect()
+          return {
+            x: rect.x + rect.width / 2,
+            y: rect.y + rect.height / 2,
+            title: root.querySelector("#context-title").textContent,
+          }
         })
         await page.mouse.click(menu.x, menu.y)
+        await page.keyboard.type("Focus on this button")
+        await page.keyboard.press("Enter")
         return page.evaluate(() => {
           const root = document.querySelector("[data-opencode-browser-owner]").shadowRoot
           const signed = window.__opencodeBrowserGhost.guidance()
@@ -449,7 +451,8 @@ test("live Chromium integration", async (t) => {
             pointerDown: window.fixedPointerDown,
             pointerUp: window.fixedPointerUp,
             auxClick: window.fixedAuxClick,
-            menuText: root.querySelector("#context-look-here").textContent,
+            menuText: root.querySelector("#context-title").textContent,
+            menuDisplay: root.querySelector("#context-menu").style.display,
             wishes: [...root.querySelectorAll("#wishes [data-status]")].map((element) => ({
               text: element.textContent,
               status: element.dataset.status,
@@ -468,18 +471,18 @@ test("live Chromium integration", async (t) => {
     assert.equal(picked.pointerUp, false)
     assert.equal(picked.auxClick, false)
     assert.ok(["Смотри сюда", "Look here", "看这里"].includes(picked.menuText))
+    assert.equal(picked.menuDisplay, "none")
     assert.equal(picked.wishes.length, 2)
     assert.deepEqual(picked.wishes.map((wish) => wish.status), ["pending", "pending"])
     assert.match(picked.wishes[0].text, /Проверь именно эту кнопку/)
-    assert.match(picked.wishes[1].text, /Fixed action/)
-    assert.equal(picked.prompt, "")
+    assert.match(picked.wishes[1].text, /Focus on this button/)
+assert.equal(picked.prompt, "")
     assert.equal(picked.cursorOpacity, "1")
     assert.equal(picked.guidance.instruction, "Проверь именно эту кнопку")
-    assert.equal(picked.guidance.target.selector, "#fixed")
-    assert.match(picked.guidance.target.text, /Fixed action/)
+    assert.equal(picked.guidance.target, undefined)
 
     const collected = await api.collectGhostGuidance()
-    assert.equal(collected.target.selector, "#fixed")
+    assert.equal(collected.instruction, "Проверь именно эту кнопку")
     await pluginHooks["tool.execute.before"](
       { tool: "browser", sessionID: "browser-session", callID: "call-1" },
       { args: {} },
@@ -496,9 +499,14 @@ test("live Chromium integration", async (t) => {
     await pluginHooks["experimental.chat.messages.transform"]({}, output)
     assert.equal(output.messages[0].parts.length, 1)
     assert.equal(output.messages[0].parts[0].synthetic, true)
-    assert.match(output.messages[0].parts[0].text, /Проверь именно эту кнопку/)
-    assert.match(output.messages[0].parts[0].text, /Selected element: #fixed/)
-    assert.match(output.messages[0].parts[0].text, /untrusted webpage-adjacent data/)
+assert.match(output.messages[0].parts[0].text, /Проверь именно эту кнопку/)
+    assert.match(output.messages[0].parts[0].text, /USER HUD INSTRUCTION/)
+    const nextCollected = await api.collectGhostGuidance()
+    assert.equal(nextCollected.instruction, "Focus on this button")
+    assert.equal(nextCollected.target.selector, "#fixed")
+    assert.match(nextCollected.target.text, /Fixed action/)
+    const consumed = await api.collectGhostGuidance(true)
+    assert.equal(consumed.instruction, "Focus on this button")
     assert.equal(await api.collectGhostGuidance(), null)
     const sentWishes = await api.withPage(
       (page) =>
@@ -544,6 +552,114 @@ test("live Chromium integration", async (t) => {
       { port },
     )
     assert.equal(cursorOpacity, "1")
+  })
+
+  await t.test("pending HUD guidance interrupts the next action and form focus persists", async () => {
+    await api.withPage(
+      async (page) => {
+        await page.$eval("#input", (element) => {
+          element.value = "before-guidance"
+        })
+        const prompt = await page.evaluate(() => {
+          const rect = document
+            .querySelector("[data-opencode-browser-owner]")
+            .shadowRoot.querySelector("#guidance-prompt")
+            .getBoundingClientRect()
+          return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
+        })
+        await page.mouse.click(prompt.x, prompt.y)
+        await page.keyboard.type("Change the current browser task now")
+        await page.keyboard.press("Enter")
+      },
+      { port },
+    )
+
+    const interrupted = JSON.parse(
+      await tool({ action: "fill", selector: "#input", value: "stale-value" }),
+    )
+    assert.equal(interrupted.interrupted, true)
+    assert.equal(interrupted.skipped_action, "fill")
+    assert.equal(interrupted.user_guidance.priority, "high")
+    assert.match(interrupted.user_guidance.instruction, /Change the current browser task now/)
+    const skippedValue = await api.withPage(
+      (page) => page.$eval("#input", (element) => element.value),
+      { port },
+    )
+    assert.equal(skippedValue, "before-guidance")
+
+    const filled = JSON.parse(
+      await tool({ action: "fill", selector: "#input", value: "focused-value" }),
+    )
+    assert.equal(filled.ok, true)
+    const focus = await api.withPage(
+      (page) =>
+        page.evaluate(() => {
+          const root = document.querySelector("[data-opencode-browser-owner]").shadowRoot
+          return {
+            active: document.activeElement?.id,
+            opacity: root.querySelector("#focus").style.opacity,
+            label: root.querySelector("#focus-label").textContent,
+            cursor: root.querySelector("#cursor").style.opacity,
+          }
+        }),
+      { port },
+    )
+    assert.equal(focus.active, "input")
+    assert.equal(focus.opacity, "1")
+    assert.match(focus.label, /Fill #input/)
+    assert.equal(focus.cursor, "1")
+  })
+
+  await t.test("targeted HUD guidance is consumed in FIFO order with its own target", async () => {
+    const queueTarget = async (selector, instruction) => {
+      const point = await testPage.$eval(selector, (element) => {
+        const rect = element.getBoundingClientRect()
+        return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
+      })
+      await testPage.mouse.click(point.x, point.y, { button: "right" })
+      const prompt = await testPage.evaluate(() => {
+        const rect = document
+          .querySelector("[data-opencode-browser-owner]")
+          .shadowRoot.querySelector("#context-comment")
+          .getBoundingClientRect()
+        return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
+      })
+      await testPage.mouse.click(prompt.x, prompt.y)
+      await testPage.keyboard.type(instruction)
+      await testPage.keyboard.press("Enter")
+    }
+
+    await queueTarget("#input", "Change this field")
+    await queueTarget("#wrong", "Remove this field")
+
+    const first = await api.collectGhostGuidance(true)
+    const second = await api.collectGhostGuidance(true)
+    assert.equal(first.instruction, "Change this field")
+    assert.equal(first.target.selector, "#input")
+    assert.equal(second.instruction, "Remove this field")
+    assert.equal(second.target.selector, "#wrong")
+    assert.equal(await api.collectGhostGuidance(true), null)
+  })
+
+  await t.test("wait_guidance returns as soon as a HUD instruction is submitted", async () => {
+    const waiting = tool({ action: "wait_guidance", timeoutMs: 3000 })
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    const prompt = await testPage.evaluate(() => {
+      const rect = document
+        .querySelector("[data-opencode-browser-owner]")
+        .shadowRoot.querySelector("#guidance-prompt")
+        .getBoundingClientRect()
+      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
+    })
+    await testPage.mouse.click(prompt.x, prompt.y)
+    await testPage.keyboard.type("Handle this, then continue")
+    await testPage.keyboard.press("Enter")
+
+    const result = JSON.parse(await waiting)
+    assert.equal(result.interrupted, true)
+    assert.match(result.user_guidance.instruction, /Handle this, then continue/)
+    assert.equal(result.user_guidance.resume_previous_plan, true)
+    assert.match(result.user_guidance.agent_action, /resume the interrupted plan/)
   })
 
   await t.test("HUD pace slider changes the delay used by the next action", async () => {
@@ -684,18 +800,16 @@ test("live Chromium integration", async (t) => {
     assert.equal(result.ok, true)
     await api.withPage(
       async (page) => {
-        const controls = await page.evaluate(() => {
+const controls = await page.evaluate(() => {
           const root = document.querySelector("[data-opencode-browser-owner]").shadowRoot
           const prompt = root.querySelector("#guidance-prompt").getBoundingClientRect()
-          const send = root.querySelector("#send-guidance").getBoundingClientRect()
           return {
             prompt: { x: prompt.x + prompt.width / 2, y: prompt.y + prompt.height / 2 },
-            send: { x: send.x + send.width / 2, y: send.y + send.height / 2 },
           }
         })
         await page.mouse.click(controls.prompt.x, controls.prompt.y)
         await page.keyboard.type("Persist across navigation")
-        await page.mouse.click(controls.send.x, controls.send.y)
+        await page.keyboard.press("Enter")
       },
       { port },
     )
@@ -707,9 +821,8 @@ test("live Chromium integration", async (t) => {
         return page.evaluate(() => {
           const host = document.querySelector("[data-opencode-browser-owner]")
           return {
-            runtime: Boolean(window.__opencodeBrowserGhost),
+runtime: Boolean(window.__opencodeBrowserGhost),
             hud: host.shadowRoot.querySelector("#hud").textContent,
-            count: host.shadowRoot.querySelector("#hud-count").textContent,
             cursorOpacity: host.shadowRoot.querySelector("#cursor").style.opacity,
             cursorTransform: host.shadowRoot.querySelector("#cursor").style.transform,
           }
@@ -719,7 +832,6 @@ test("live Chromium integration", async (t) => {
     )
     assert.equal(state.runtime, true)
     assert.match(state.hud, /Persisted navigation task/)
-    assert.equal(state.count, "1/1")
     assert.equal(state.cursorOpacity, "1")
     assert.match(state.cursorTransform, /translate3d/)
     const persistedGuidance = await api.collectGhostGuidance(true)
@@ -771,8 +883,9 @@ test("live Chromium integration", async (t) => {
               const root = document.querySelector("[data-opencode-browser-owner]").shadowRoot
               return {
                 placeholder: root.querySelector("#guidance-prompt").placeholder,
-                send: root.querySelector("#send-guidance").textContent,
-                lookHere: root.querySelector("#context-look-here").textContent,
+                lookHere: root.querySelector("#context-title").textContent,
+                contextPlaceholder: root.querySelector("#context-comment").placeholder,
+                contextHint: root.querySelector("#context-hint").textContent,
                 pace: root.querySelector("#pace > span").textContent,
                 active: root.querySelector("#locale-switch [aria-pressed=true]").dataset.locale,
               }
@@ -787,22 +900,25 @@ test("live Chromium integration", async (t) => {
     assert.deepEqual(localized, [
       {
         placeholder: "Additional instruction for AI…",
-        send: "Send instruction",
         lookHere: "Look here",
+        contextPlaceholder: "What should I look at?",
+        contextHint: "Enter to send · Shift+Enter for a new line",
         pace: "Pace",
         active: "en",
       },
       {
         placeholder: "Доп. пожелание для ИИ…",
-        send: "Отправить пожелание",
         lookHere: "Смотри сюда",
+        contextPlaceholder: "Что здесь важно?",
+        contextHint: "Enter — отправить · Shift+Enter — новая строка",
         pace: "Скорость",
         active: "ru",
       },
       {
         placeholder: "给 AI 的附加指令…",
-        send: "发送指令",
         lookHere: "看这里",
+        contextPlaceholder: "这里需要关注什么？",
+        contextHint: "Enter 发送 · Shift+Enter 换行",
         pace: "速度",
         active: "zh",
       },

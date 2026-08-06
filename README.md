@@ -110,15 +110,19 @@ optional `task` argument to replace an inferred action label with a user-facing 
 All visual elements are hidden while `screenshot` captures the page and restored
 afterward.
 
-Drag the compact OpenCode-style HUD by its header. Enter an additional instruction and
-press the send button to queue it for the next model request. Recent wishes remain
+Drag the compact OpenCode-style HUD by its header. Type an additional instruction and press
+**Enter** to queue it for the next model request (**Shift+Enter** inserts a newline; there
+is no send button). Recent wishes remain
 visible in the HUD; a lime dot is pending and a gray dot is already sent. No empty-state
-message is shown. To point at a page element,
-right-click it and choose **Look here** from the injected context menu. This custom menu
-replaces Chrome's native menu for that right-click. The element selector, text, and
-clipped HTML are sent once, then consumed. Selected webpage content is explicitly marked
-as untrusted, webpage-adjacent data and added as a synthetic user-context part rather
-than a system instruction.
+message is shown. To point at a page element, right-click it, type a comment in the
+injected **Look here** composer, and press **Enter** (**Shift+Enter** inserts a newline).
+This custom menu replaces Chrome's native menu for that right-click. The comment,
+element selector, text, and clipped HTML are sent once, then consumed. During active
+browser work, pending guidance interrupts the next browser action and is returned directly
+in its tool result; otherwise it is injected as the first part of your next user message.
+In both cases it is labeled as a high-priority user instruction;
+selected webpage content stays explicitly marked as untrusted, webpage-adjacent data and
+is added as a synthetic user-context part rather than a system instruction.
 
 Use the `RU / EN / 中文` switcher in the HUD to choose English, Russian, or Simplified
 Chinese. Before a manual selection, the page's `<html lang>` takes priority, followed by
