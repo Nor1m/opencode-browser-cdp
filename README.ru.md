@@ -4,7 +4,7 @@
 
 [![license](https://img.shields.io/github/license/Nor1m/opencode-browser-cdp)](LICENSE)
 
-<img width="384" height="368" alt="image" src="https://github.com/user-attachments/assets/a3c5dd4a-df27-45f4-b2db-438fe2eda4de" />
+![Автоматическое заполнение формы с живым HUD](assets/browser-demo.gif)
 
 Быстрая автоматизация браузера для OpenCode через постоянное соединение Puppeteer
 CDP. Плагин управляет настоящим окном Chromium и добавляет инструмент **`browser`**.

@@ -7,8 +7,7 @@
 Fast browser automation for OpenCode through a persistent Puppeteer CDP connection.
 It controls a real Chromium window and adds one tool: **`browser`**.
 
-<img width="384" height="368" alt="image" src="https://github.com/user-attachments/assets/a3c5dd4a-df27-45f4-b2db-438fe2eda4de" />
-
+![Browser form automation with the live HUD](assets/browser-demo.gif)
 
 ## Quick start
 

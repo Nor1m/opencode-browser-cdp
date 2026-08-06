@@ -7,7 +7,7 @@
 通过持久化 Puppeteer CDP 连接为 OpenCode 提供快速浏览器自动化。插件控制真实的
 Chromium 窗口，并添加一个 **`browser`** 工具。
 
-<img width="384" height="368" alt="image" src="https://github.com/user-attachments/assets/a3c5dd4a-df27-45f4-b2db-438fe2eda4de" />
+![带实时 HUD 的浏览器表单自动化](assets/browser-demo.gif)
 
 ## 快速开始
 
