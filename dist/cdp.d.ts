@@ -1,4 +1,5 @@
 import { type Browser, type Page } from "puppeteer-core";
+import { type GhostGuidance } from "./ghost.js";
 declare const DATA_DIR: string;
 declare const STATE_PATH: string;
 export declare const DEFAULT_PORT: number;
@@ -50,6 +51,7 @@ export declare function disconnectAll(): Promise<void>;
 export declare function activate(): () => Promise<void>;
 export declare function ensureGhost(page: Page): Promise<boolean>;
 export declare function destroyGhost(page: Page): Promise<void>;
+export declare function collectGhostGuidance(consume?: boolean): Promise<GhostGuidance | null>;
 export declare function withPage<T>(fn: (page: Page, browser: Browser) => Promise<T>, { port, tabId, newTab, }?: {
     port?: number;
     tabId?: string | null;

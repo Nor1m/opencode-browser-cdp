@@ -8,6 +8,14 @@
 - Remove registered preload scripts and page overlays when the plugin is disposed.
 - Install from GitHub instead of the npm registry and track built `dist` artifacts for
   script-free Git installs.
+- Make the browser HUD draggable, add a submitted guidance prompt, and inject a
+  **Look Here** action into the page's right-click context menu.
+- Inject explicitly selected browser context into the next model request while marking
+  webpage text and HTML as untrusted synthetic user context. Guidance is consumed once.
+- Keep the visual cursor visible at its last position between actions and navigations.
+- Localize HUD and context-menu controls in English, Russian, and Simplified Chinese.
+- Pin Chrome for Testing in CI, run live Chromium only on Node 22, and report browser
+  process diagnostics when CDP startup fails.
 
 ## 0.2.0 - 2026-08-06
 

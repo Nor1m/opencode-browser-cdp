@@ -1,5 +1,6 @@
 import puppeteer, { type Browser, type Page } from "puppeteer-core"
 import { spawn } from "node:child_process"
+import { createHmac, timingSafeEqual } from "node:crypto"
 import fs from "node:fs"
 import path from "node:path"
 import os from "node:os"
@@ -7,9 +8,12 @@ import { clearTasks } from "./visual.js"
 import {
   GHOST_ACTION_DELAY,
   GHOST_ENABLED,
+  GHOST_GUIDANCE_SECRET,
   GHOST_OWNER,
   GHOST_SOURCE,
+  type GhostGuidance,
   type GhostRuntime,
+  type SignedGhostGuidance,
 } from "./ghost.js"
 
 const DATA_DIR = path.join(os.tmpdir(), "opencode-browser-cdp")
@@ -183,6 +187,7 @@ export async function ensureChrome({
   fs.mkdirSync(PROFILE_DIR, { recursive: true })
   const args = [
     `--remote-debugging-port=${port}`,
+    "--remote-debugging-address=127.0.0.1",
     `--user-data-dir=${PROFILE_DIR}`,
     "--no-first-run",
     "--no-default-browser-check",
@@ -190,16 +195,33 @@ export async function ensureChrome({
     "--window-size=1400,900",
     "about:blank",
   ]
-  if (!headed) args.push("--headless=new")
+  if (!headed) {
+    args.push("--headless=new", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage")
+  }
 
+  const captureDiagnostics = process.env.CI === "true"
   const child = spawn(chrome, args, {
     detached: true,
-    stdio: "ignore",
+    stdio: captureDiagnostics ? ["ignore", "ignore", "pipe"] : "ignore",
     windowsHide: false,
+  })
+  let exitCode: number | null = null
+  let exitSignal: NodeJS.Signals | null = null
+  let spawnError = ""
+  let stderr = ""
+  child.once("error", (error) => {
+    spawnError = error.message
+  })
+  child.once("exit", (code, signal) => {
+    exitCode = code
+    exitSignal = signal
+  })
+  child.stderr?.on("data", (chunk) => {
+    stderr = `${stderr}${String(chunk)}`.slice(-4000)
   })
   child.unref()
 
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 100; i++) {
     await new Promise((r) => setTimeout(r, 300))
     const v = await isCdpUp(port)
     if (v) {
@@ -213,10 +235,18 @@ export async function ensureChrome({
         chrome,
       }
     }
+    if (spawnError || exitCode !== null || exitSignal !== null) break
   }
+  if (exitCode === null && exitSignal === null && !spawnError) child.kill()
+  const diagnostic = [
+    spawnError ? `spawn: ${spawnError}` : "",
+    exitCode === null ? "" : `exit=${exitCode}`,
+    exitSignal ? `signal=${exitSignal}` : "",
+    stderr.trim() ? `stderr: ${stderr.trim()}` : "",
+  ].filter(Boolean).join("; ")
   return {
     ok: false as const,
-    error: `Browser launched but CDP :${port} not ready`,
+    error: `Browser launched but CDP :${port} not ready${diagnostic ? ` (${diagnostic})` : ""}`,
     chrome,
     pid: child.pid,
   }
@@ -368,6 +398,7 @@ export async function ensureGhost(page: Page): Promise<boolean> {
   const registration = await page.evaluateOnNewDocument(GHOST_SOURCE, {
     owner: GHOST_OWNER,
     actionDelay: GHOST_ACTION_DELAY,
+    guidanceSecret: GHOST_GUIDANCE_SECRET,
   })
   const entry = { identifier: registration.identifier, page }
   ghostRegistrations.set(id, entry)
@@ -375,7 +406,11 @@ export async function ensureGhost(page: Page): Promise<boolean> {
     if (ghostRegistrations.get(id) === entry) ghostRegistrations.delete(id)
   })
   await page
-    .evaluate(GHOST_SOURCE, { owner: GHOST_OWNER, actionDelay: GHOST_ACTION_DELAY })
+    .evaluate(GHOST_SOURCE, {
+      owner: GHOST_OWNER,
+      actionDelay: GHOST_ACTION_DELAY,
+      guidanceSecret: GHOST_GUIDANCE_SECRET,
+    })
     .catch(() => {})
   return true
 }
@@ -401,6 +436,52 @@ export async function destroyGhost(page: Page): Promise<void> {
       .catch(() => {})
   }
   if (id && ghostRegistrations.get(id) === registration) ghostRegistrations.delete(id)
+}
+
+const consumedGuidanceSignatures = new Set<string>()
+
+function verifiedGuidance(
+  value: SignedGhostGuidance | null,
+  consume: boolean,
+): GhostGuidance | null {
+  if (!value) return null
+  if (consumedGuidanceSignatures.has(value.signature)) return null
+  const expected = createHmac("sha256", GHOST_GUIDANCE_SECRET)
+    .update(JSON.stringify(value.guidance))
+    .digest()
+  const actual = Buffer.from(value.signature, "base64")
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return null
+  if (consume) {
+    consumedGuidanceSignatures.add(value.signature)
+    if (consumedGuidanceSignatures.size > 1000) {
+      consumedGuidanceSignatures.delete(consumedGuidanceSignatures.values().next().value!)
+    }
+  }
+  return value.guidance
+}
+
+export async function collectGhostGuidance(consume = false): Promise<GhostGuidance | null> {
+  const guidance: GhostGuidance[] = []
+  for (const { browser } of browsers.values()) {
+    if (!browser.connected) continue
+    const pages = await browser.pages().catch(() => [])
+    const values = await Promise.all(
+      pages.filter(isToolPage).map((page) =>
+        page
+          .evaluate(({ owner, consume }) => {
+            const runtime = (window as Window & { __opencodeBrowserGhost?: GhostRuntime })
+              .__opencodeBrowserGhost
+            return runtime?.owner === owner ? runtime.guidance(consume) : null
+          }, { owner: GHOST_OWNER, consume })
+          .catch(() => null),
+      ),
+    )
+    for (const value of values) {
+      const verified = verifiedGuidance(value, consume)
+      if (verified) guidance.push(verified)
+    }
+  }
+  return guidance.sort((left, right) => right.updatedAt - left.updatedAt)[0] ?? null
 }
 
 export async function withPage<T>(

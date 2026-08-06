@@ -110,6 +110,20 @@ optional `task` argument to replace an inferred action label with a user-facing 
 All visual elements are hidden while `screenshot` captures the page and restored
 afterward.
 
+Drag the HUD by its header to move it. Enter an additional instruction and press the
+send button to queue it for the next model request. To point at a page element,
+right-click it and choose **Look here** from the injected context menu. This custom menu
+replaces Chrome's native menu for that right-click. The element selector, text, and
+clipped HTML are sent once, then consumed. Selected webpage content is explicitly marked
+as untrusted, webpage-adjacent data and added as a synthetic user-context part rather
+than a system instruction.
+
+Static HUD and context-menu controls support English, Russian, and Simplified Chinese.
+The page's `<html lang>` takes priority, followed by the browser language.
+
+The DOM cursor remains visible at its last known position between actions. On a new
+document it is restored from tab state or starts in the center of the viewport.
+
 Each managed tab registers the visual runtime once through CDP before page scripts
 run, so navigation and strict CSP do not require full reinjection. HUD state is
 restored automatically across same-origin navigations through `sessionStorage`;

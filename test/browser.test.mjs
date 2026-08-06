@@ -32,7 +32,9 @@ process.env.OPENCODE_BROWSER_ACTION_DELAY = "0"
 
 const api = await import("../dist/cdp.js")
 const { browserTool } = await import("../dist/tool.js")
-const disposePlugin = api.activate()
+const createPlugin = (await import("../dist/index.js")).default
+const pluginHooks = await createPlugin()
+const disposePlugin = pluginHooks.dispose
 
 let testPage
 let browserProcessStarted = false
@@ -40,6 +42,17 @@ let browserPid
 
 function tool(args) {
   return browserTool.execute({ port, ...args })
+}
+
+function chatMessages(sessionID) {
+  return {
+    messages: [
+      {
+        info: { id: `message-${sessionID}`, sessionID, role: "user" },
+        parts: [],
+      },
+    ],
+  }
 }
 
 async function closeTestBrowser() {
@@ -97,12 +110,16 @@ test("live Chromium integration", async (t) => {
   browserProcessStarted = started.ok ? started.started : Boolean(started.pid)
   assert.equal(started.ok, true, started.error)
 
-  const navigationServer = createHttpServer((_request, response) => {
+  const navigationServer = createHttpServer((request, response) => {
+    const requestedLanguage = new URL(request.url, "http://127.0.0.1").searchParams.get("lang")
+    const language = ["en", "ru", "zh-CN"].includes(requestedLanguage) ? requestedLanguage : ""
     response.writeHead(200, {
       "content-type": "text/html; charset=utf-8",
       "content-security-policy": "require-trusted-types-for 'script'; style-src 'none'",
     })
-    response.end("<!doctype html><html><body><main>Preload navigation target</main></body></html>")
+    response.end(
+      `<!doctype html><html${language ? ` lang="${language}"` : ""}><body><main>Preload navigation target</main></body></html>`,
+    )
   })
   await new Promise((resolve, reject) => {
     navigationServer.once("error", reject)
@@ -129,9 +146,15 @@ test("live Chromium integration", async (t) => {
         <script>
           window.events = []
           window.fixedClicked = false
+          window.fixedPointerDown = false
+          window.fixedPointerUp = false
+          window.fixedAuxClick = false
           document.querySelector('#input').addEventListener('input', () => window.events.push('input'))
           document.querySelector('#input').addEventListener('change', () => window.events.push('change'))
           document.querySelector('#fixed').addEventListener('click', () => { window.fixedClicked = true })
+          document.querySelector('#fixed').addEventListener('pointerdown', () => { window.fixedPointerDown = true })
+          document.querySelector('#fixed').addEventListener('pointerup', () => { window.fixedPointerUp = true })
+          document.querySelector('#fixed').addEventListener('auxclick', () => { window.fixedAuxClick = true })
         </script>
       `)
     },
@@ -311,6 +334,183 @@ test("live Chromium integration", async (t) => {
     assert.equal(state.paceValue, "0")
   })
 
+  await t.test("HUD can be dragged without moving the operating system cursor", async () => {
+    const movement = await api.withPage(
+      async (page) => {
+        const before = await page.evaluate(() => {
+          const head = document
+            .querySelector("[data-opencode-browser-owner]")
+            .shadowRoot.querySelector("#hud-head")
+          const rect = head.getBoundingClientRect()
+          return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+        })
+        await page.mouse.move(before.x + before.width / 2, before.y + before.height / 2)
+        await page.mouse.down()
+        await page.mouse.move(before.x + before.width / 2 - 100, before.y + before.height / 2 + 70)
+        await page.mouse.up()
+        const after = await page.evaluate(() => {
+          const hud = document
+            .querySelector("[data-opencode-browser-owner]")
+            .shadowRoot.querySelector("#hud")
+          const rect = hud.getBoundingClientRect()
+          return { x: rect.x, y: rect.y }
+        })
+        return { before, after }
+      },
+      { port },
+    )
+    assert.ok(movement.after.x < movement.before.x - 80)
+    assert.ok(movement.after.y > movement.before.y + 50)
+  })
+
+  await t.test("right-click Look Here and submitted prompt reach the next model request", async () => {
+    await api.withPage(
+      async (page) => {
+        await page.evaluate(() => {
+          window.fixedClicked = false
+          window.fixedPointerDown = false
+          window.fixedPointerUp = false
+          window.fixedAuxClick = false
+        })
+        const controls = await page.evaluate(() => {
+          const root = document.querySelector("[data-opencode-browser-owner]").shadowRoot
+          const prompt = root.querySelector("#guidance-prompt").getBoundingClientRect()
+          const send = root.querySelector("#send-guidance").getBoundingClientRect()
+          return {
+            prompt: { x: prompt.x + prompt.width / 2, y: prompt.y + prompt.height / 2 },
+            send: { x: send.x + send.width / 2, y: send.y + send.height / 2 },
+          }
+        })
+        await page.mouse.click(controls.prompt.x, controls.prompt.y)
+        await page.keyboard.type("Проверь именно эту кнопку")
+        await page.evaluate(() => {
+          const send = document
+            .querySelector("[data-opencode-browser-owner]")
+            .shadowRoot.querySelector("#send-guidance")
+          send.click()
+        })
+      },
+      { port },
+    )
+    assert.equal(await api.collectGhostGuidance(), null)
+
+    const picked = await api.withPage(
+      async (page) => {
+        await page.evaluate(() => {
+          const prompt = document
+            .querySelector("[data-opencode-browser-owner]")
+            .shadowRoot.querySelector("#guidance-prompt")
+          prompt.value = "FORGED"
+          prompt.dispatchEvent(new Event("input", { bubbles: true }))
+          prompt.value = "Проверь именно эту кнопку"
+        })
+        const controls = await page.evaluate(() => {
+          const root = document.querySelector("[data-opencode-browser-owner]").shadowRoot
+          const send = root.querySelector("#send-guidance").getBoundingClientRect()
+          const target = document.querySelector("#fixed").getBoundingClientRect()
+          return {
+            send: { x: send.x + send.width / 2, y: send.y + send.height / 2 },
+            target: { x: target.x + target.width / 2, y: target.y + target.height / 2 },
+          }
+        })
+        await page.mouse.click(controls.send.x, controls.send.y)
+        await page.mouse.click(controls.target.x, controls.target.y, { button: "right" })
+        const menu = await page.evaluate(() => {
+          const item = document
+            .querySelector("[data-opencode-browser-owner]")
+            .shadowRoot.querySelector("#context-look-here")
+          const rect = item.getBoundingClientRect()
+          return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, text: item.textContent }
+        })
+        await page.mouse.click(menu.x, menu.y)
+        return page.evaluate(() => {
+          const root = document.querySelector("[data-opencode-browser-owner]").shadowRoot
+          const signed = window.__opencodeBrowserGhost.guidance()
+          return {
+            clicked: window.fixedClicked,
+            pointerDown: window.fixedPointerDown,
+            pointerUp: window.fixedPointerUp,
+            auxClick: window.fixedAuxClick,
+            menuText: root.querySelector("#context-look-here").textContent,
+            status: root.querySelector("#guidance-status").textContent,
+            prompt: root.querySelector("#guidance-prompt").value,
+            cursorOpacity: root.querySelector("#cursor").style.opacity,
+            guidance: signed.guidance,
+            signed,
+          }
+        })
+      },
+      { port },
+    )
+    assert.equal(picked.clicked, false)
+    assert.equal(picked.pointerDown, false)
+    assert.equal(picked.pointerUp, false)
+    assert.equal(picked.auxClick, false)
+    assert.ok(["Смотри сюда", "Look here", "看这里"].includes(picked.menuText))
+    assert.equal(picked.status, "#fixed")
+    assert.equal(picked.prompt, "")
+    assert.equal(picked.cursorOpacity, "1")
+    assert.equal(picked.guidance.instruction, "Проверь именно эту кнопку")
+    assert.equal(picked.guidance.target.selector, "#fixed")
+    assert.match(picked.guidance.target.text, /Fixed action/)
+
+    const collected = await api.collectGhostGuidance()
+    assert.equal(collected.target.selector, "#fixed")
+    await pluginHooks["tool.execute.before"](
+      { tool: "browser", sessionID: "browser-session", callID: "call-1" },
+      { args: {} },
+    )
+    const unrelated = chatMessages("other-session")
+    await pluginHooks["experimental.chat.messages.transform"]({}, unrelated)
+    assert.equal(unrelated.messages[0].parts.length, 0)
+    assert.notEqual(await api.collectGhostGuidance(), null)
+    const missingSession = { messages: [] }
+    await pluginHooks["experimental.chat.messages.transform"]({}, missingSession)
+    assert.equal(missingSession.messages.length, 0)
+    assert.notEqual(await api.collectGhostGuidance(), null)
+    const output = chatMessages("browser-session")
+    await pluginHooks["experimental.chat.messages.transform"]({}, output)
+    assert.equal(output.messages[0].parts.length, 1)
+    assert.equal(output.messages[0].parts[0].synthetic, true)
+    assert.match(output.messages[0].parts[0].text, /Проверь именно эту кнопку/)
+    assert.match(output.messages[0].parts[0].text, /Selected element: #fixed/)
+    assert.match(output.messages[0].parts[0].text, /untrusted webpage-adjacent data/)
+    assert.equal(await api.collectGhostGuidance(), null)
+    await api.withPage(
+      (page) =>
+        page.evaluate((replay) => {
+          window.__originalGhost = window.__opencodeBrowserGhost
+          window.__opencodeBrowserGhost = {
+            ...window.__opencodeBrowserGhost,
+            guidance: () => replay,
+          }
+        }, picked.signed),
+      { port },
+    )
+    assert.equal(await api.collectGhostGuidance(), null)
+    await api.withPage(
+      (page) =>
+        page.evaluate(() => {
+          window.__opencodeBrowserGhost = window.__originalGhost
+          delete window.__originalGhost
+        }),
+      { port },
+    )
+
+    await tool({ action: "text" })
+    const cursorOpacity = await api.withPage(
+      (page) =>
+        page.evaluate(
+          () =>
+            document
+              .querySelector("[data-opencode-browser-owner]")
+              .shadowRoot.querySelector("#cursor").style.opacity,
+        ),
+      { port },
+    )
+    assert.equal(cursorOpacity, "1")
+  })
+
   await t.test("HUD pace slider changes the delay used by the next action", async () => {
     await api.withPage(
       async (page) => {
@@ -359,8 +559,15 @@ test("live Chromium integration", async (t) => {
     const captured = readFileSync(result.path)
     const state = await api.withPage(async (page) => {
       const visible = Buffer.from(await page.screenshot())
+      const point = await page.evaluate(() => {
+        const hud = document
+          .querySelector("[data-opencode-browser-owner]")
+          .shadowRoot.querySelector("#hud")
+          .getBoundingClientRect()
+        return { x: Math.round(hud.left + 20), y: Math.round(hud.top + 20) }
+      })
       const sample = (png) =>
-        page.evaluate(async (base64) => {
+        page.evaluate(async ({ base64, x, y }) => {
           const image = new Image()
           image.src = `data:image/png;base64,${base64}`
           await image.decode()
@@ -369,8 +576,8 @@ test("live Chromium integration", async (t) => {
           canvas.height = image.height
           const context = canvas.getContext("2d")
           context.drawImage(image, 0, 0)
-          return [...context.getImageData(image.width - 60, 50, 1, 1).data]
-        }, png.toString("base64"))
+          return [...context.getImageData(x, y, 1, 1).data]
+        }, { base64: png.toString("base64"), ...point })
       return {
         visible,
         hiddenPixel: await sample(captured),
@@ -440,6 +647,23 @@ test("live Chromium integration", async (t) => {
     )
     const result = JSON.parse(await tool({ action: "text", task: "Persisted navigation task" }))
     assert.equal(result.ok, true)
+    await api.withPage(
+      async (page) => {
+        const controls = await page.evaluate(() => {
+          const root = document.querySelector("[data-opencode-browser-owner]").shadowRoot
+          const prompt = root.querySelector("#guidance-prompt").getBoundingClientRect()
+          const send = root.querySelector("#send-guidance").getBoundingClientRect()
+          return {
+            prompt: { x: prompt.x + prompt.width / 2, y: prompt.y + prompt.height / 2 },
+            send: { x: send.x + send.width / 2, y: send.y + send.height / 2 },
+          }
+        })
+        await page.mouse.click(controls.prompt.x, controls.prompt.y)
+        await page.keyboard.type("Persist across navigation")
+        await page.mouse.click(controls.send.x, controls.send.y)
+      },
+      { port },
+    )
 
     const state = await api.withPage(
       async (page) => {
@@ -451,6 +675,8 @@ test("live Chromium integration", async (t) => {
             runtime: Boolean(window.__opencodeBrowserGhost),
             hud: host.shadowRoot.querySelector("#hud").textContent,
             count: host.shadowRoot.querySelector("#hud-count").textContent,
+            cursorOpacity: host.shadowRoot.querySelector("#cursor").style.opacity,
+            cursorTransform: host.shadowRoot.querySelector("#cursor").style.transform,
           }
         })
       },
@@ -459,6 +685,83 @@ test("live Chromium integration", async (t) => {
     assert.equal(state.runtime, true)
     assert.match(state.hud, /Persisted navigation task/)
     assert.equal(state.count, "1/1")
+    assert.equal(state.cursorOpacity, "1")
+    assert.match(state.cursorTransform, /translate3d/)
+    const persistedGuidance = await api.collectGhostGuidance(true)
+    assert.equal(persistedGuidance.instruction, "Persist across navigation")
+  })
+
+  await t.test("preload does not mount duplicate HUDs inside child frames", async () => {
+    const frameState = await api.withPage(
+      async (page) => {
+        await page.evaluate((frameUrl) => {
+          const frame = document.createElement("iframe")
+          frame.src = frameUrl
+          document.body.appendChild(frame)
+        }, `${navigationOrigin}/frame`)
+        const frame = await page.waitForFrame((candidate) => candidate.url().endsWith("/frame"))
+        return {
+          main: await page.$$("[data-opencode-browser-owner]").then((items) => items.length),
+          child: await frame.$$("[data-opencode-browser-owner]").then((items) => items.length),
+        }
+      },
+      { port },
+    )
+    assert.deepEqual(frameState, { main: 1, child: 0 })
+  })
+
+  await t.test("HUD and context-menu controls support English, Russian, and Chinese", async () => {
+    const localized = await api.withPage(
+      async (page) => {
+        const cases = ["en", "ru", "zh-CN"]
+        const values = []
+        for (const language of cases) {
+          await page.goto(`${navigationOrigin}/localized?lang=${language}`, {
+            waitUntil: "domcontentloaded",
+          })
+          await page.waitForSelector("[data-opencode-browser-owner]")
+          const target = await page.$eval("main", (element) => {
+            const rect = element.getBoundingClientRect()
+            return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
+          })
+          await page.mouse.click(target.x, target.y, { button: "right" })
+          values.push(
+            await page.evaluate(() => {
+              const root = document.querySelector("[data-opencode-browser-owner]").shadowRoot
+              return {
+                placeholder: root.querySelector("#guidance-prompt").placeholder,
+                send: root.querySelector("#send-guidance").textContent,
+                lookHere: root.querySelector("#context-look-here").textContent,
+                pace: root.querySelector("#pace > span").textContent,
+              }
+            }),
+          )
+          await page.keyboard.press("Escape")
+        }
+        return values
+      },
+      { port },
+    )
+    assert.deepEqual(localized, [
+      {
+        placeholder: "Additional instruction for AI…",
+        send: "Send instruction",
+        lookHere: "Look here",
+        pace: "Pace",
+      },
+      {
+        placeholder: "Доп. пожелание для ИИ…",
+        send: "Отправить пожелание",
+        lookHere: "Смотри сюда",
+        pace: "Скорость",
+      },
+      {
+        placeholder: "给 AI 的附加指令…",
+        send: "发送指令",
+        lookHere: "看这里",
+        pace: "速度",
+      },
+    ])
   })
 
   await t.test("dispose drains active work and rejects queued reconnects", async () => {
