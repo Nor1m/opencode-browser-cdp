@@ -2,8 +2,6 @@
 
 [English](README.md) | [Русский](README.ru.md) | [中文](README.zh-CN.md)
 
-[GitHub repository](https://github.com/Nor1m/opencode-browser-cdp)
-
 [![license](https://img.shields.io/github/license/Nor1m/opencode-browser-cdp)](LICENSE)
 
 Fast browser automation for OpenCode through a persistent Puppeteer CDP connection.
