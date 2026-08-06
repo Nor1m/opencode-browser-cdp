@@ -2,24 +2,23 @@
 
 [English](README.md) | [Русский](README.ru.md) | [中文](README.zh-CN.md)
 
-[GitHub repository](https://github.com/Nor1m/opencode-browser-cdp) | [npm package](https://www.npmjs.com/package/opencode-browser-cdp)
+[GitHub repository](https://github.com/Nor1m/opencode-browser-cdp)
 
-[![npm](https://img.shields.io/npm/v/opencode-browser-cdp)](https://www.npmjs.com/package/opencode-browser-cdp)
 [![CI](https://github.com/Nor1m/opencode-browser-cdp/actions/workflows/ci.yml/badge.svg)](https://github.com/Nor1m/opencode-browser-cdp/actions/workflows/ci.yml)
-[![license](https://img.shields.io/npm/l/opencode-browser-cdp)](LICENSE)
+[![license](https://img.shields.io/github/license/Nor1m/opencode-browser-cdp)](LICENSE)
 
 Fast browser automation for OpenCode through a persistent Puppeteer CDP connection.
 It controls a real Chromium window and adds one tool: **`browser`**.
 
 ## Quick start
 
-Add the npm plugin to `~/.config/opencode/opencode.json` or
+Add the GitHub plugin to `~/.config/opencode/opencode.json` or
 `~/.config/opencode/opencode.jsonc`:
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["opencode-browser-cdp@latest"]
+  "plugin": ["github:Nor1m/opencode-browser-cdp#main"]
 }
 ```
 
@@ -31,8 +30,9 @@ browser action=open url=https://example.com
 browser action=text
 ```
 
-OpenCode installs npm plugins automatically. No global `npm install`, wrapper, MCP
-server, or separate browser driver is required.
+OpenCode installs this Git revision and its dependencies directly from GitHub. No global
+install, wrapper, MCP server, or separate browser driver is required. OpenCode caches a
+Git spec after the first install; use a commit SHA or a new Git tag when upgrading.
 
 ## Why use it
 
@@ -109,6 +109,11 @@ The top-right HUD lists running and queued browser actions with progress. Pass t
 optional `task` argument to replace an inferred action label with a user-facing name.
 All visual elements are hidden while `screenshot` captures the page and restored
 afterward.
+
+Each managed tab registers the visual runtime once through CDP before page scripts
+run, so navigation and strict CSP do not require full reinjection. HUD state is
+restored automatically across same-origin navigations through `sessionStorage`;
+cross-origin pages receive the current state on the next browser action.
 
 Actions use a human-like delay of `350 ms` with small random variation by default.
 Change it at runtime with the **Pace** slider in the HUD, or set

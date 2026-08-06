@@ -1,14 +1,15 @@
 import assert from "node:assert/strict"
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { createServer as createHttpServer } from "node:http"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { createServer } from "node:net"
+import { createServer as createNetServer } from "node:net"
 import { spawnSync } from "node:child_process"
 import test from "node:test"
 
 function freePort() {
   return new Promise((resolve, reject) => {
-    const server = createServer()
+    const server = createNetServer()
     server.unref()
     server.on("error", reject)
     server.listen(0, "127.0.0.1", () => {
@@ -96,6 +97,21 @@ test("live Chromium integration", async (t) => {
   browserProcessStarted = started.ok ? started.started : Boolean(started.pid)
   assert.equal(started.ok, true, started.error)
 
+  const navigationServer = createHttpServer((_request, response) => {
+    response.writeHead(200, {
+      "content-type": "text/html; charset=utf-8",
+      "content-security-policy": "require-trusted-types-for 'script'; style-src 'none'",
+    })
+    response.end("<!doctype html><html><body><main>Preload navigation target</main></body></html>")
+  })
+  await new Promise((resolve, reject) => {
+    navigationServer.once("error", reject)
+    navigationServer.listen(0, "127.0.0.1", resolve)
+  })
+  const navigationAddress = navigationServer.address()
+  const navigationOrigin = `http://127.0.0.1:${navigationAddress.port}`
+  t.after(() => new Promise((resolve) => navigationServer.close(resolve)))
+
   let firstBrowser
   await api.withPage(
     async (page, browser) => {
@@ -108,6 +124,7 @@ test("live Chromium integration", async (t) => {
         <div id="editable" contenteditable="true">old</div>
         <div id="hidden" contenteditable="true" style="display:none">old</div>
         <input id="offscreen" style="display:block;margin-top:2400px" value="old">
+        <div style="height:1000px"></div>
         <button id="fixed" style="position:fixed;left:12px;bottom:12px">Fixed action</button>
         <script>
           window.events = []
@@ -260,8 +277,11 @@ test("live Chromium integration", async (t) => {
         page.evaluate(() => {
           const host = document.querySelector("#__opencode_browser_visuals")
           const root = host.shadowRoot
+          const targetRect = document.querySelector("#offscreen").getBoundingClientRect()
           return {
             scrollY: window.scrollY,
+            targetCenter: targetRect.top + targetRect.height / 2,
+            viewportCenter: window.innerHeight / 2,
             pointerEvents: host.style.pointerEvents,
             hud: root.querySelector("#hud").textContent,
             count: root.querySelector("#hud-count").textContent,
@@ -276,6 +296,10 @@ test("live Chromium integration", async (t) => {
       { port },
     )
     assert.ok(state.scrollY > 1000)
+    assert.ok(
+      Math.abs(state.targetCenter - state.viewportCenter) < 10,
+      `target was not centered: ${state.targetCenter} vs ${state.viewportCenter}`,
+    )
     assert.equal(state.pointerEvents, "none")
     assert.match(state.hud, /Fill offscreen account field/)
     assert.equal(state.count, "1/1")
@@ -409,6 +433,34 @@ test("live Chromium integration", async (t) => {
     assert.doesNotMatch(html.html, /data-opencode-browser-owner/)
   })
 
+  await t.test("preload restores the HUD across same-origin navigation without another update", async () => {
+    await api.withPage(
+      (page) => page.goto(`${navigationOrigin}/first`, { waitUntil: "domcontentloaded" }),
+      { port },
+    )
+    const result = JSON.parse(await tool({ action: "text", task: "Persisted navigation task" }))
+    assert.equal(result.ok, true)
+
+    const state = await api.withPage(
+      async (page) => {
+        await page.goto(`${navigationOrigin}/second`, { waitUntil: "domcontentloaded" })
+        await page.waitForSelector("[data-opencode-browser-owner]")
+        return page.evaluate(() => {
+          const host = document.querySelector("[data-opencode-browser-owner]")
+          return {
+            runtime: Boolean(window.__opencodeBrowserGhost),
+            hud: host.shadowRoot.querySelector("#hud").textContent,
+            count: host.shadowRoot.querySelector("#hud-count").textContent,
+          }
+        })
+      },
+      { port },
+    )
+    assert.equal(state.runtime, true)
+    assert.match(state.hud, /Persisted navigation task/)
+    assert.equal(state.count, "1/1")
+  })
+
   await t.test("dispose drains active work and rejects queued reconnects", async () => {
     let release
     const gate = new Promise((resolve) => {
@@ -432,12 +484,24 @@ test("live Chromium integration", async (t) => {
     assert.equal(queuedRan, false)
     assert.equal(firstBrowser.connected, false)
 
+    const detachedBrowser = await api.connect(port)
+    const detachedPages = await detachedBrowser.pages()
+    const detachedPage =
+      detachedPages.find((page) => page.url().startsWith(navigationOrigin)) ?? detachedPages[0]
+    await detachedPage.goto(`${navigationOrigin}/after-dispose`, { waitUntil: "domcontentloaded" })
+    const removed = await detachedPage.evaluate(() => ({
+      overlay: Boolean(document.querySelector("[data-opencode-browser-owner]")),
+      runtime: Boolean(window.__opencodeBrowserGhost),
+    }))
+    assert.deepEqual(removed, { overlay: false, runtime: false })
+    detachedBrowser.disconnect()
+
     const disposeSecondInstance = api.activate()
     let secondBrowser
     await api.withPage(async (page, browser) => {
       secondBrowser = browser
       const overlay = await page.$("[data-opencode-browser-owner]")
-      assert.equal(overlay, null)
+      assert.notEqual(overlay, null)
       if (!page.isClosed()) await page.close()
     }, { port })
     assert.equal(secondBrowser.connected, true)

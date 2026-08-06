@@ -2,24 +2,23 @@
 
 [English](README.md) | [Русский](README.ru.md) | [中文](README.zh-CN.md)
 
-[Репозиторий GitHub](https://github.com/Nor1m/opencode-browser-cdp) | [Пакет npm](https://www.npmjs.com/package/opencode-browser-cdp)
+[Репозиторий GitHub](https://github.com/Nor1m/opencode-browser-cdp)
 
-[![npm](https://img.shields.io/npm/v/opencode-browser-cdp)](https://www.npmjs.com/package/opencode-browser-cdp)
 [![CI](https://github.com/Nor1m/opencode-browser-cdp/actions/workflows/ci.yml/badge.svg)](https://github.com/Nor1m/opencode-browser-cdp/actions/workflows/ci.yml)
-[![license](https://img.shields.io/npm/l/opencode-browser-cdp)](LICENSE)
+[![license](https://img.shields.io/github/license/Nor1m/opencode-browser-cdp)](LICENSE)
 
 Быстрая автоматизация браузера для OpenCode через постоянное соединение Puppeteer
 CDP. Плагин управляет настоящим окном Chromium и добавляет инструмент **`browser`**.
 
 ## Быстрый старт
 
-Добавьте npm-плагин в `~/.config/opencode/opencode.json` или
+Добавьте GitHub-плагин в `~/.config/opencode/opencode.json` или
 `~/.config/opencode/opencode.jsonc`:
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["opencode-browser-cdp@latest"]
+  "plugin": ["github:Nor1m/opencode-browser-cdp#main"]
 }
 ```
 
@@ -31,8 +30,10 @@ browser action=open url=https://example.com
 browser action=text
 ```
 
-OpenCode устанавливает npm-плагины автоматически. Глобальный `npm install`, wrapper,
-MCP-сервер и отдельный браузерный драйвер не нужны.
+OpenCode устанавливает эту Git-ревизию и её зависимости напрямую из GitHub. Глобальная
+установка, wrapper, MCP-сервер и отдельный браузерный драйвер не нужны. После первой
+установки OpenCode кэширует Git-spec; для обновления укажите SHA нового commit или новый
+Git-тег.
 
 ## Возможности
 
@@ -102,6 +103,12 @@ overlay не мешает странице.
 HUD показывает выполняемые и ожидающие действия. Аргумент `task` позволяет задать
 понятное пользователю название операции. При `screenshot` весь overlay скрывается и
 после снимка восстанавливается.
+
+В каждой управляемой вкладке visual runtime один раз регистрируется через CDP до
+скриптов страницы, поэтому навигация и строгий CSP не требуют полной повторной
+инъекции. При переходах внутри одного origin состояние HUD автоматически
+восстанавливается из `sessionStorage`; после cross-origin перехода актуальное
+состояние придёт со следующим действием браузера.
 
 По умолчанию между действиями используется human-like задержка `350 ms` со случайным
 отклонением ±20%. Её можно изменить ползунком **Pace** или переменной

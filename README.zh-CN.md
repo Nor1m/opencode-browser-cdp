@@ -2,24 +2,23 @@
 
 [English](README.md) | [Русский](README.ru.md) | [中文](README.zh-CN.md)
 
-[GitHub 仓库](https://github.com/Nor1m/opencode-browser-cdp) | [npm 软件包](https://www.npmjs.com/package/opencode-browser-cdp)
+[GitHub 仓库](https://github.com/Nor1m/opencode-browser-cdp)
 
-[![npm](https://img.shields.io/npm/v/opencode-browser-cdp)](https://www.npmjs.com/package/opencode-browser-cdp)
 [![CI](https://github.com/Nor1m/opencode-browser-cdp/actions/workflows/ci.yml/badge.svg)](https://github.com/Nor1m/opencode-browser-cdp/actions/workflows/ci.yml)
-[![license](https://img.shields.io/npm/l/opencode-browser-cdp)](LICENSE)
+[![license](https://img.shields.io/github/license/Nor1m/opencode-browser-cdp)](LICENSE)
 
 通过持久化 Puppeteer CDP 连接为 OpenCode 提供快速浏览器自动化。插件控制真实的
 Chromium 窗口，并添加一个 **`browser`** 工具。
 
 ## 快速开始
 
-将 npm 插件添加到 `~/.config/opencode/opencode.json` 或
+将 GitHub 插件添加到 `~/.config/opencode/opencode.json` 或
 `~/.config/opencode/opencode.jsonc`：
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["opencode-browser-cdp@latest"]
+  "plugin": ["github:Nor1m/opencode-browser-cdp#main"]
 }
 ```
 
@@ -31,7 +30,9 @@ browser action=open url=https://example.com
 browser action=text
 ```
 
-OpenCode 会自动安装 npm 插件，无需全局 `npm install`、包装脚本、MCP 服务器或独立驱动。
+OpenCode 会直接从 GitHub 安装该 Git 修订版及其依赖，无需全局安装、包装脚本、MCP
+服务器或独立驱动。首次安装后 OpenCode 会缓存 Git spec；升级时请改用新的 commit SHA
+或 Git 标签。
 
 ## 主要功能
 
@@ -99,6 +100,10 @@ CDP 端口优先级：
 
 HUD 显示正在运行和排队的操作。可使用可选 `task` 参数提供更易读的任务名称。
 执行 `screenshot` 时会隐藏全部可视化元素，完成后自动恢复。
+
+每个受控标签页只通过 CDP 注册一次可视化运行时，并在页面脚本之前执行，因此导航和
+严格 CSP 都不需要重复注入完整界面。同源导航时，HUD 状态会通过 `sessionStorage`
+自动恢复；跨源导航后，下一次浏览器操作会同步最新状态。
 
 默认操作间隔为 `350 ms`，并带有 ±20% 的随机变化。可通过 HUD 中的 **Pace**
 滑块或 `OPENCODE_BROWSER_ACTION_DELAY` 修改；设置为 `0` 可获得最高速度。

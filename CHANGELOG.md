@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Register the visual runtime once per managed target with CDP
+  `Page.addScriptToEvaluateOnNewDocument` instead of reinjecting the full UI per action.
+- Restore HUD tasks and pace across same-origin navigations through `sessionStorage`.
+- Remove registered preload scripts and page overlays when the plugin is disposed.
+- Install from GitHub instead of the npm registry and track built `dist` artifacts for
+  script-free Git installs.
+
 ## 0.2.0 - 2026-08-06
 
 - Reuse persistent Puppeteer connections per CDP port.

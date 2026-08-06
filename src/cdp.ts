@@ -3,7 +3,14 @@ import { spawn } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import os from "node:os"
-import { clearTasks, removeVisuals } from "./visual.js"
+import { clearTasks } from "./visual.js"
+import {
+  GHOST_ACTION_DELAY,
+  GHOST_ENABLED,
+  GHOST_OWNER,
+  GHOST_SOURCE,
+  type GhostRuntime,
+} from "./ghost.js"
 
 const DATA_DIR = path.join(os.tmpdir(), "opencode-browser-cdp")
 const STATE_PATH = path.join(DATA_DIR, "state.json")
@@ -232,7 +239,13 @@ type BrowserEntry = {
   browser: Browser
 }
 
+type GhostRegistration = {
+  identifier: string
+  page: Page
+}
+
 const browsers = new Map<number, BrowserEntry>()
+const ghostRegistrations = new Map<string, GhostRegistration>()
 const portQueues = new Map<number, Promise<void>>()
 let activeInstances = 0
 let acceptingConnections = false
@@ -248,6 +261,9 @@ async function persistentBrowser(port: number): Promise<Browser> {
   const entry = { browser }
   browser.on("disconnected", () => {
     if (browsers.get(port) === entry) browsers.delete(port)
+    for (const [id, registration] of ghostRegistrations) {
+      if (registration.page.browser() === browser) ghostRegistrations.delete(id)
+    }
   })
   browsers.set(port, entry)
   return browser
@@ -276,7 +292,7 @@ export async function disconnectAll(): Promise<void> {
   for (const [port, { browser }] of entries) {
     try {
       const pages = await browser.pages()
-      await Promise.allSettled(pages.map((page) => removeVisuals(page)))
+      await Promise.allSettled(pages.map((page) => destroyGhost(page)))
       clearTasks(port)
     } catch {
       /* disconnect even if a target disappears during visual cleanup */
@@ -287,6 +303,7 @@ export async function disconnectAll(): Promise<void> {
       /* ignore */
     }
   }
+  ghostRegistrations.clear()
   clearTasks()
 }
 
@@ -332,6 +349,60 @@ function targetId(page: Page): string | null {
   }
 }
 
+export async function ensureGhost(page: Page): Promise<boolean> {
+  if (!GHOST_ENABLED || page.isClosed()) return false
+  const id = targetId(page)
+  if (!id) return false
+
+  const existing = ghostRegistrations.get(id)
+  if (existing) {
+    existing.page = page
+    return true
+  }
+
+  await page
+    .evaluate(() => {
+      delete (window as Window & { __ghostDisabled?: boolean }).__ghostDisabled
+    })
+    .catch(() => {})
+  const registration = await page.evaluateOnNewDocument(GHOST_SOURCE, {
+    owner: GHOST_OWNER,
+    actionDelay: GHOST_ACTION_DELAY,
+  })
+  const entry = { identifier: registration.identifier, page }
+  ghostRegistrations.set(id, entry)
+  page.once("close", () => {
+    if (ghostRegistrations.get(id) === entry) ghostRegistrations.delete(id)
+  })
+  await page
+    .evaluate(GHOST_SOURCE, { owner: GHOST_OWNER, actionDelay: GHOST_ACTION_DELAY })
+    .catch(() => {})
+  return true
+}
+
+export async function destroyGhost(page: Page): Promise<void> {
+  const id = targetId(page)
+  const registration = id ? ghostRegistrations.get(id) : undefined
+  await page
+    .evaluate((owner) => {
+      const ghostWindow = window as Window & {
+        __ghostDisabled?: boolean
+        __opencodeBrowserGhost?: GhostRuntime
+      }
+      ghostWindow.__ghostDisabled = true
+      if (ghostWindow.__opencodeBrowserGhost?.owner === owner) {
+        ghostWindow.__opencodeBrowserGhost.destroy()
+      }
+    }, GHOST_OWNER)
+    .catch(() => {})
+  if (registration) {
+    await page
+      .removeScriptToEvaluateOnNewDocument(registration.identifier)
+      .catch(() => {})
+  }
+  if (id && ghostRegistrations.get(id) === registration) ghostRegistrations.delete(id)
+}
+
 export async function withPage<T>(
   fn: (page: Page, browser: Browser) => Promise<T>,
   {
@@ -363,6 +434,8 @@ export async function withPage<T>(
       page =
         [...pages].reverse().find(isToolPage) || pages[0] || (await browser.newPage())
     }
+
+    await ensureGhost(page)
 
     try {
       await page.bringToFront()
