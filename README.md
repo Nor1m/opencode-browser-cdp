@@ -2,6 +2,8 @@
 
 [English](README.md) | [Русский](README.ru.md) | [中文](README.zh-CN.md)
 
+[GitHub repository](https://github.com/Nor1m/opencode-browser-cdp) | [npm package](https://www.npmjs.com/package/opencode-browser-cdp)
+
 [![npm](https://img.shields.io/npm/v/opencode-browser-cdp)](https://www.npmjs.com/package/opencode-browser-cdp)
 [![CI](https://github.com/Nor1m/opencode-browser-cdp/actions/workflows/ci.yml/badge.svg)](https://github.com/Nor1m/opencode-browser-cdp/actions/workflows/ci.yml)
 [![license](https://img.shields.io/npm/l/opencode-browser-cdp)](LICENSE)

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 - Unreleased
+## 0.2.0 - 2026-08-06
 
 - Reuse persistent Puppeteer connections per CDP port.
 - Serialize page actions per port to prevent keyboard and form races.

@@ -1,7 +1,7 @@
 {
   "name": "opencode-browser-cdp",
   "version": "0.2.0",
-  "description": "OpenCode plugin: headed Chrome browser control via CDP (Puppeteer). Tool name: browser.",
+  "description": "Fast visual Chromium automation for OpenCode via persistent Puppeteer CDP connections.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -23,7 +23,7 @@
   "scripts": {
     "build": "node ./node_modules/typescript/bin/tsc -p tsconfig.json",
     "check": "npm run typecheck && npm test && npm run test:browser",
-    "prepublishOnly": "npm run build",
+    "prepublishOnly": "npm run check",
     "test": "npm run build && node --test test/exports.test.mjs test/port.test.mjs test/visual.test.mjs",
     "test:browser": "npm run build && node --test test/browser.test.mjs",
     "typecheck": "node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
