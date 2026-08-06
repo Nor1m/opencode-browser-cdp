@@ -4,7 +4,6 @@
 
 [GitHub repository](https://github.com/Nor1m/opencode-browser-cdp)
 
-[![CI](https://github.com/Nor1m/opencode-browser-cdp/actions/workflows/ci.yml/badge.svg)](https://github.com/Nor1m/opencode-browser-cdp/actions/workflows/ci.yml)
 [![license](https://img.shields.io/github/license/Nor1m/opencode-browser-cdp)](LICENSE)
 
 Fast browser automation for OpenCode through a persistent Puppeteer CDP connection.
