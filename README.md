@@ -10,6 +10,8 @@
 Fast browser automation for OpenCode through a persistent Puppeteer CDP connection.
 It controls a real Chromium window and adds one tool: **`browser`**.
 
+<img width="364" height="354" alt="image" src="https://github.com/user-attachments/assets/7acb79de-c3e2-48c9-b42b-a39980ad2844" />
+
 ## Quick start
 
 Add the GitHub plugin to `~/.config/opencode/opencode.json` or
