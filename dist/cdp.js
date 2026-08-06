@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { clearTasks } from "./visual.js";
-import { GHOST_ACTION_DELAY, GHOST_ENABLED, GHOST_GUIDANCE_SECRET, GHOST_OWNER, GHOST_SOURCE, } from "./ghost.js";
+import { GHOST_ACTION_DELAY, GHOST_ENABLED, GHOST_GUIDANCE_SECRET, GHOST_OWNER, GHOST_SOURCE, isGhostTheme, } from "./ghost.js";
 const DATA_DIR = path.join(os.tmpdir(), "opencode-browser-cdp");
 const STATE_PATH = path.join(DATA_DIR, "state.json");
 const ENV_PORT = parsePort(process.env.OPENCODE_CDP_PORT);
@@ -241,6 +241,22 @@ export async function connect(port = DEFAULT_PORT) {
         protocolTimeout: 60000,
     });
 }
+function themePreference() {
+    const state = loadState();
+    return {
+        name: isGhostTheme(state.theme) ? state.theme : "carbon",
+        updatedAt: Number.isFinite(state.themeUpdatedAt) ? Number(state.themeUpdatedAt) : 0,
+    };
+}
+function rememberTheme(preference) {
+    const current = themePreference();
+    if (!isGhostTheme(preference.name) || !Number.isFinite(preference.updatedAt))
+        return current;
+    if (preference.updatedAt < current.updatedAt)
+        return current;
+    saveState({ theme: preference.name, themeUpdatedAt: preference.updatedAt });
+    return preference;
+}
 const browsers = new Map();
 const ghostRegistrations = new Map();
 const portQueues = new Map();
@@ -289,7 +305,10 @@ export async function disconnectAll() {
     for (const [port, { browser }] of entries) {
         try {
             const pages = await browser.pages();
-            await Promise.allSettled(pages.map((page) => destroyGhost(page)));
+            await Promise.allSettled(pages.map(async (page) => {
+                await syncGhostTheme(page);
+                await destroyGhost(page);
+            }));
             clearTasks(port);
         }
         catch {
@@ -345,6 +364,46 @@ function targetId(page) {
         return null;
     }
 }
+function ghostConfig(theme) {
+    return {
+        owner: GHOST_OWNER,
+        actionDelay: GHOST_ACTION_DELAY,
+        guidanceSecret: GHOST_GUIDANCE_SECRET,
+        theme: theme.name,
+        themeUpdatedAt: theme.updatedAt,
+    };
+}
+async function pageThemePreference(page) {
+    return page
+        .evaluate((owner) => {
+        const runtime = window
+            .__opencodeBrowserGhost;
+        return runtime?.owner === owner ? runtime.theme() : null;
+    }, GHOST_OWNER)
+        .then((value) => value && isGhostTheme(value.name) && Number.isFinite(value.updatedAt) ? value : null)
+        .catch(() => null);
+}
+async function syncGhostTheme(page) {
+    let current = themePreference();
+    const selected = await pageThemePreference(page);
+    if (!selected)
+        return current;
+    if (selected.updatedAt > current.updatedAt)
+        current = rememberTheme(selected);
+    else if (current.updatedAt > selected.updatedAt || current.name !== selected.name) {
+        await page
+            .evaluate(({ owner, preference }) => {
+            const runtime = window
+                .__opencodeBrowserGhost;
+            return runtime?.owner === owner ? runtime.setTheme(preference) : false;
+        }, { owner: GHOST_OWNER, preference: current })
+            .catch(() => false);
+    }
+    return current;
+}
+async function installGhostPreload(page, theme) {
+    return page.evaluateOnNewDocument(GHOST_SOURCE, ghostConfig(theme));
+}
 export async function ensureGhost(page) {
     if (!GHOST_ENABLED || page.isClosed())
         return false;
@@ -354,31 +413,29 @@ export async function ensureGhost(page) {
     const existing = ghostRegistrations.get(id);
     if (existing) {
         existing.page = page;
+        const theme = await syncGhostTheme(page);
+        if (theme.name !== existing.theme.name || theme.updatedAt !== existing.theme.updatedAt) {
+            await page.removeScriptToEvaluateOnNewDocument(existing.identifier).catch(() => { });
+            const registration = await installGhostPreload(page, theme);
+            existing.identifier = registration.identifier;
+            existing.theme = theme;
+        }
         return true;
     }
+    const theme = themePreference();
     await page
         .evaluate(() => {
         delete window.__ghostDisabled;
     })
         .catch(() => { });
-    const registration = await page.evaluateOnNewDocument(GHOST_SOURCE, {
-        owner: GHOST_OWNER,
-        actionDelay: GHOST_ACTION_DELAY,
-        guidanceSecret: GHOST_GUIDANCE_SECRET,
-    });
-    const entry = { identifier: registration.identifier, page };
+    const registration = await installGhostPreload(page, theme);
+    const entry = { identifier: registration.identifier, page, theme };
     ghostRegistrations.set(id, entry);
     page.once("close", () => {
         if (ghostRegistrations.get(id) === entry)
             ghostRegistrations.delete(id);
     });
-    await page
-        .evaluate(GHOST_SOURCE, {
-        owner: GHOST_OWNER,
-        actionDelay: GHOST_ACTION_DELAY,
-        guidanceSecret: GHOST_GUIDANCE_SECRET,
-    })
-        .catch(() => { });
+    await page.evaluate(GHOST_SOURCE, ghostConfig(theme)).catch(() => { });
     return true;
 }
 export async function destroyGhost(page) {
@@ -427,6 +484,7 @@ export async function collectGhostGuidance(consume = false) {
         if (!browser.connected)
             continue;
         const pages = await browser.pages().catch(() => []);
+        await Promise.allSettled(pages.filter(isToolPage).map((page) => syncGhostTheme(page)));
         const values = await Promise.all(pages.filter(isToolPage).map((page) => page
             .evaluate(({ owner, consume }) => {
             const runtime = window

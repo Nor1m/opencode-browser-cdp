@@ -363,6 +363,24 @@ test("live Chromium integration", async (t) => {
     assert.ok(movement.after.y > movement.before.y + 50)
   })
 
+  await t.test("empty HUD does not render an empty-guidance message", async () => {
+    const empty = await api.withPage(
+      (page) =>
+        page.evaluate(() => {
+          const root = document.querySelector("[data-opencode-browser-owner]").shadowRoot
+          return {
+            legacyStatus: Boolean(root.querySelector("#guidance-status")),
+            wishesDisplay: root.querySelector("#wishes").style.display,
+            text: root.querySelector("#hud").textContent,
+          }
+        }),
+      { port },
+    )
+    assert.equal(empty.legacyStatus, false)
+    assert.equal(empty.wishesDisplay, "none")
+    assert.doesNotMatch(empty.text, /No guidance|Нет пожеланий|暂无指令/)
+  })
+
   await t.test("right-click Look Here and submitted prompt reach the next model request", async () => {
     await api.withPage(
       async (page) => {
@@ -432,7 +450,10 @@ test("live Chromium integration", async (t) => {
             pointerUp: window.fixedPointerUp,
             auxClick: window.fixedAuxClick,
             menuText: root.querySelector("#context-look-here").textContent,
-            status: root.querySelector("#guidance-status").textContent,
+            wishes: [...root.querySelectorAll("#wishes [data-status]")].map((element) => ({
+              text: element.textContent,
+              status: element.dataset.status,
+            })),
             prompt: root.querySelector("#guidance-prompt").value,
             cursorOpacity: root.querySelector("#cursor").style.opacity,
             guidance: signed.guidance,
@@ -447,7 +468,10 @@ test("live Chromium integration", async (t) => {
     assert.equal(picked.pointerUp, false)
     assert.equal(picked.auxClick, false)
     assert.ok(["Смотри сюда", "Look here", "看这里"].includes(picked.menuText))
-    assert.equal(picked.status, "#fixed")
+    assert.equal(picked.wishes.length, 2)
+    assert.deepEqual(picked.wishes.map((wish) => wish.status), ["pending", "pending"])
+    assert.match(picked.wishes[0].text, /Проверь именно эту кнопку/)
+    assert.match(picked.wishes[1].text, /Fixed action/)
     assert.equal(picked.prompt, "")
     assert.equal(picked.cursorOpacity, "1")
     assert.equal(picked.guidance.instruction, "Проверь именно эту кнопку")
@@ -476,6 +500,17 @@ test("live Chromium integration", async (t) => {
     assert.match(output.messages[0].parts[0].text, /Selected element: #fixed/)
     assert.match(output.messages[0].parts[0].text, /untrusted webpage-adjacent data/)
     assert.equal(await api.collectGhostGuidance(), null)
+    const sentWishes = await api.withPage(
+      (page) =>
+        page.evaluate(() =>
+          [...document
+            .querySelector("[data-opencode-browser-owner]")
+            .shadowRoot.querySelectorAll("#wishes [data-status]")]
+            .map((element) => element.dataset.status),
+        ),
+      { port },
+    )
+    assert.deepEqual(sentWishes, ["sent", "sent"])
     await api.withPage(
       (page) =>
         page.evaluate((replay) => {
@@ -713,13 +748,19 @@ test("live Chromium integration", async (t) => {
   await t.test("HUD and context-menu controls support English, Russian, and Chinese", async () => {
     const localized = await api.withPage(
       async (page) => {
-        const cases = ["en", "ru", "zh-CN"]
+        await page.goto(`${navigationOrigin}/localized?lang=en`, { waitUntil: "domcontentloaded" })
+        await page.waitForSelector("[data-opencode-browser-owner]")
+        const cases = ["en", "ru", "zh"]
         const values = []
-        for (const language of cases) {
-          await page.goto(`${navigationOrigin}/localized?lang=${language}`, {
-            waitUntil: "domcontentloaded",
-          })
-          await page.waitForSelector("[data-opencode-browser-owner]")
+        for (const locale of cases) {
+          const switcher = await page.evaluate((nextLocale) => {
+            const button = document
+              .querySelector("[data-opencode-browser-owner]")
+              .shadowRoot.querySelector(`[data-locale="${nextLocale}"]`)
+            const rect = button.getBoundingClientRect()
+            return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
+          }, locale)
+          await page.mouse.click(switcher.x, switcher.y)
           const target = await page.$eval("main", (element) => {
             const rect = element.getBoundingClientRect()
             return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
@@ -733,6 +774,7 @@ test("live Chromium integration", async (t) => {
                 send: root.querySelector("#send-guidance").textContent,
                 lookHere: root.querySelector("#context-look-here").textContent,
                 pace: root.querySelector("#pace > span").textContent,
+                active: root.querySelector("#locale-switch [aria-pressed=true]").dataset.locale,
               }
             }),
           )
@@ -748,20 +790,71 @@ test("live Chromium integration", async (t) => {
         send: "Send instruction",
         lookHere: "Look here",
         pace: "Pace",
+        active: "en",
       },
       {
         placeholder: "Доп. пожелание для ИИ…",
         send: "Отправить пожелание",
         lookHere: "Смотри сюда",
         pace: "Скорость",
+        active: "ru",
       },
       {
         placeholder: "给 AI 的附加指令…",
         send: "发送指令",
         lookHere: "看这里",
         pace: "速度",
+        active: "zh",
       },
     ])
+  })
+
+  await t.test("HUD theme selector persists one of ten themes across origins", async () => {
+    const selected = await api.withPage(
+      (page) =>
+        page.evaluate(() => {
+          const root = document.querySelector("[data-opencode-browser-owner]").shadowRoot
+          const select = root.querySelector("#theme-select")
+          const options = [...select.options].map((option) => option.value)
+          select.value = "paper"
+          select.dispatchEvent(new Event("change", { bubbles: true }))
+          return {
+            options,
+            preference: window.__opencodeBrowserGhost.theme(),
+            background: root.querySelector("#hud").style.background,
+          }
+        }),
+      { port },
+    )
+    assert.equal(selected.options.length, 10)
+    assert.deepEqual(selected.options.slice(0, 5), [
+      "carbon", "graphite", "obsidian", "slate", "ink",
+    ])
+    assert.deepEqual(selected.options.slice(5), [
+      "paper", "porcelain", "fog", "stone", "pearl",
+    ])
+    assert.equal(selected.preference.name, "paper")
+    assert.ok(selected.preference.updatedAt > 0)
+    assert.match(selected.background, /#fbfaf7|rgb\(251, 250, 247\)/)
+
+    const restored = await api.withPage(
+      async (page) => {
+        await page.goto("data:text/html,<main>cross-origin theme</main>")
+        await page.waitForSelector("[data-opencode-browser-owner]")
+        return page.evaluate(() => {
+          const root = document.querySelector("[data-opencode-browser-owner]").shadowRoot
+          return {
+            preference: window.__opencodeBrowserGhost.theme(),
+            selected: root.querySelector("#theme-select").value,
+            background: root.querySelector("#hud").style.background,
+          }
+        })
+      },
+      { port },
+    )
+    assert.equal(restored.preference.name, "paper")
+    assert.equal(restored.selected, "paper")
+    assert.match(restored.background, /#fbfaf7|rgb\(251, 250, 247\)/)
   })
 
   await t.test("dispose drains active work and rejects queued reconnects", async () => {

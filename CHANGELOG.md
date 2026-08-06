@@ -14,6 +14,9 @@
   webpage text and HTML as untrusted synthetic user context. Guidance is consumed once.
 - Keep the visual cursor visible at its last position between actions and navigations.
 - Localize HUD and context-menu controls in English, Russian, and Simplified Chinese.
+- Simplify the HUD into an OpenCode-style panel with a `RU / EN / 中文` language
+  switcher and a visible pending/sent wish history without empty-state copy.
+- Add five dark and five light HUD themes with a persistent in-HUD theme selector.
 - Pin Chrome for Testing in CI, run live Chromium only on Node 22, and report browser
   process diagnostics when CDP startup fails.
 

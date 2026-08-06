@@ -11,8 +11,11 @@ import {
   GHOST_GUIDANCE_SECRET,
   GHOST_OWNER,
   GHOST_SOURCE,
+  isGhostTheme,
   type GhostGuidance,
   type GhostRuntime,
+  type GhostTheme,
+  type GhostThemePreference,
   type SignedGhostGuidance,
 } from "./ghost.js"
 
@@ -269,9 +272,26 @@ type BrowserEntry = {
   browser: Browser
 }
 
+function themePreference(): GhostThemePreference {
+  const state = loadState()
+  return {
+    name: isGhostTheme(state.theme) ? state.theme : "carbon",
+    updatedAt: Number.isFinite(state.themeUpdatedAt) ? Number(state.themeUpdatedAt) : 0,
+  }
+}
+
+function rememberTheme(preference: GhostThemePreference): GhostThemePreference {
+  const current = themePreference()
+  if (!isGhostTheme(preference.name) || !Number.isFinite(preference.updatedAt)) return current
+  if (preference.updatedAt < current.updatedAt) return current
+  saveState({ theme: preference.name, themeUpdatedAt: preference.updatedAt })
+  return preference
+}
+
 type GhostRegistration = {
   identifier: string
   page: Page
+  theme: GhostThemePreference
 }
 
 const browsers = new Map<number, BrowserEntry>()
@@ -322,7 +342,12 @@ export async function disconnectAll(): Promise<void> {
   for (const [port, { browser }] of entries) {
     try {
       const pages = await browser.pages()
-      await Promise.allSettled(pages.map((page) => destroyGhost(page)))
+      await Promise.allSettled(
+        pages.map(async (page) => {
+          await syncGhostTheme(page)
+          await destroyGhost(page)
+        }),
+      )
       clearTasks(port)
     } catch {
       /* disconnect even if a target disappears during visual cleanup */
@@ -379,6 +404,50 @@ function targetId(page: Page): string | null {
   }
 }
 
+function ghostConfig(theme: GhostThemePreference) {
+  return {
+    owner: GHOST_OWNER,
+    actionDelay: GHOST_ACTION_DELAY,
+    guidanceSecret: GHOST_GUIDANCE_SECRET,
+    theme: theme.name,
+    themeUpdatedAt: theme.updatedAt,
+  }
+}
+
+async function pageThemePreference(page: Page): Promise<GhostThemePreference | null> {
+  return page
+    .evaluate((owner) => {
+      const runtime = (window as Window & { __opencodeBrowserGhost?: GhostRuntime })
+        .__opencodeBrowserGhost
+      return runtime?.owner === owner ? runtime.theme() : null
+    }, GHOST_OWNER)
+    .then((value) =>
+      value && isGhostTheme(value.name) && Number.isFinite(value.updatedAt) ? value : null,
+    )
+    .catch(() => null)
+}
+
+async function syncGhostTheme(page: Page): Promise<GhostThemePreference> {
+  let current = themePreference()
+  const selected = await pageThemePreference(page)
+  if (!selected) return current
+  if (selected.updatedAt > current.updatedAt) current = rememberTheme(selected)
+  else if (current.updatedAt > selected.updatedAt || current.name !== selected.name) {
+    await page
+      .evaluate(({ owner, preference }) => {
+        const runtime = (window as Window & { __opencodeBrowserGhost?: GhostRuntime })
+          .__opencodeBrowserGhost
+        return runtime?.owner === owner ? runtime.setTheme(preference) : false
+      }, { owner: GHOST_OWNER, preference: current })
+      .catch(() => false)
+  }
+  return current
+}
+
+async function installGhostPreload(page: Page, theme: GhostThemePreference) {
+  return page.evaluateOnNewDocument(GHOST_SOURCE, ghostConfig(theme))
+}
+
 export async function ensureGhost(page: Page): Promise<boolean> {
   if (!GHOST_ENABLED || page.isClosed()) return false
   const id = targetId(page)
@@ -387,31 +456,29 @@ export async function ensureGhost(page: Page): Promise<boolean> {
   const existing = ghostRegistrations.get(id)
   if (existing) {
     existing.page = page
+    const theme = await syncGhostTheme(page)
+    if (theme.name !== existing.theme.name || theme.updatedAt !== existing.theme.updatedAt) {
+      await page.removeScriptToEvaluateOnNewDocument(existing.identifier).catch(() => {})
+      const registration = await installGhostPreload(page, theme)
+      existing.identifier = registration.identifier
+      existing.theme = theme
+    }
     return true
   }
 
+  const theme = themePreference()
   await page
     .evaluate(() => {
       delete (window as Window & { __ghostDisabled?: boolean }).__ghostDisabled
     })
     .catch(() => {})
-  const registration = await page.evaluateOnNewDocument(GHOST_SOURCE, {
-    owner: GHOST_OWNER,
-    actionDelay: GHOST_ACTION_DELAY,
-    guidanceSecret: GHOST_GUIDANCE_SECRET,
-  })
-  const entry = { identifier: registration.identifier, page }
+  const registration = await installGhostPreload(page, theme)
+  const entry = { identifier: registration.identifier, page, theme }
   ghostRegistrations.set(id, entry)
   page.once("close", () => {
     if (ghostRegistrations.get(id) === entry) ghostRegistrations.delete(id)
   })
-  await page
-    .evaluate(GHOST_SOURCE, {
-      owner: GHOST_OWNER,
-      actionDelay: GHOST_ACTION_DELAY,
-      guidanceSecret: GHOST_GUIDANCE_SECRET,
-    })
-    .catch(() => {})
+  await page.evaluate(GHOST_SOURCE, ghostConfig(theme)).catch(() => {})
   return true
 }
 
@@ -465,6 +532,7 @@ export async function collectGhostGuidance(consume = false): Promise<GhostGuidan
   for (const { browser } of browsers.values()) {
     if (!browser.connected) continue
     const pages = await browser.pages().catch(() => [])
+    await Promise.allSettled(pages.filter(isToolPage).map((page) => syncGhostTheme(page)))
     const values = await Promise.all(
       pages.filter(isToolPage).map((page) =>
         page

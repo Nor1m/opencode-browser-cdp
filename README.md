@@ -103,23 +103,31 @@ to `browser` or set `OPENCODE_CDP_PORT`.
 Page actions automatically scroll their target into the center of the viewport. A
 DOM-based cursor moves to the target while a focus ring identifies the exact element.
 This overlay never moves or captures the operating system cursor. The cursor and
-focus ring use `pointer-events: none`; only the pace control accepts user input.
+focus ring use `pointer-events: none`; only the compact HUD accepts user input.
 
 The top-right HUD lists running and queued browser actions with progress. Pass the
 optional `task` argument to replace an inferred action label with a user-facing name.
 All visual elements are hidden while `screenshot` captures the page and restored
 afterward.
 
-Drag the HUD by its header to move it. Enter an additional instruction and press the
-send button to queue it for the next model request. To point at a page element,
+Drag the compact OpenCode-style HUD by its header. Enter an additional instruction and
+press the send button to queue it for the next model request. Recent wishes remain
+visible in the HUD; a lime dot is pending and a gray dot is already sent. No empty-state
+message is shown. To point at a page element,
 right-click it and choose **Look here** from the injected context menu. This custom menu
 replaces Chrome's native menu for that right-click. The element selector, text, and
 clipped HTML are sent once, then consumed. Selected webpage content is explicitly marked
 as untrusted, webpage-adjacent data and added as a synthetic user-context part rather
 than a system instruction.
 
-Static HUD and context-menu controls support English, Russian, and Simplified Chinese.
-The page's `<html lang>` takes priority, followed by the browser language.
+Use the `RU / EN / 中文` switcher in the HUD to choose English, Russian, or Simplified
+Chinese. Before a manual selection, the page's `<html lang>` takes priority, followed by
+the browser language.
+
+The HUD theme selector offers five dark themes (`Carbon`, `Graphite`, `Obsidian`,
+`Slate`, `Ink`) and five light themes (`Paper`, `Porcelain`, `Fog`, `Stone`, `Pearl`).
+The selected theme is stored in plugin state and restored across sites and OpenCode
+restarts.
 
 The DOM cursor remains visible at its last known position between actions. On a new
 document it is restored from tab state or starts in the center of the viewport.

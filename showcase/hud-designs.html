@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenCode Browser HUD - 10 design directions</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #171717; background: #ececea; }
+    button, textarea, input { font: inherit; }
+    .page-head { max-width: 1460px; margin: 0 auto; padding: 34px 28px 22px; display: grid; grid-template-columns: 1fr auto; gap: 24px; align-items: end; }
+    .eyebrow { margin: 0 0 8px; color: #737373; font: 600 11px/1.2 ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; }
+    h1 { max-width: 780px; margin: 0; font-size: clamp(27px, 4vw, 48px); line-height: 1.02; letter-spacing: -.055em; font-weight: 650; }
+    .intro { max-width: 560px; margin: 14px 0 0; color: #666; font-size: 14px; line-height: 1.55; }
+    .constraints { max-width: 300px; margin: 0; padding: 12px 14px; color: #555; background: rgba(255,255,255,.46); border: 1px solid #d4d4d0; border-radius: 5px; font-size: 12px; line-height: 1.55; }
+    .grid { max-width: 1460px; margin: 0 auto; padding: 0 28px 100px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+    .option { position: relative; min-width: 0; padding: 12px; border: 1px solid #d0d0cc; border-radius: 7px; background: rgba(255,255,255,.34); cursor: pointer; transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease; }
+    .option:hover { border-color: #8f8f8a; transform: translateY(-1px); }
+    .option.selected { border-color: #111; box-shadow: 0 0 0 1px #111; }
+    .option-head { height: 35px; display: flex; align-items: center; gap: 9px; padding: 0 3px; }
+    .index { color: #92928d; font: 600 10px/1 ui-monospace, monospace; }
+    .option h2 { margin: 0; font-size: 13px; letter-spacing: -.01em; font-weight: 650; }
+    .descriptor { margin-left: auto; color: #888; font-size: 10px; }
+    .stage { min-height: 460px; display: grid; place-items: center; padding: 30px 18px; overflow: hidden; border: 1px solid #dbdbd7; border-radius: 5px; background-color: #f6f6f3; background-image: linear-gradient(#e8e8e4 1px, transparent 1px), linear-gradient(90deg, #e8e8e4 1px, transparent 1px); background-size: 24px 24px; }
+
+    .hud { --bg:#fff; --fg:#18181b; --muted:#777; --line:#dededb; --surface:#f5f5f3; --button:#171717; --button-fg:#fff; --dot:#171717; width: 320px; overflow: hidden; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 5px; box-shadow: 0 10px 26px rgba(0,0,0,.1); font: 11px/1.35 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .hud-head { min-height: 39px; display: flex; align-items: center; gap: 8px; padding: 7px 8px 7px 10px; border-bottom: 1px solid var(--line); }
+    .brand { margin-right: auto; font-weight: 750; letter-spacing: -.03em; }
+    .count { color: var(--muted); font-size: 9px; }
+    .langs { display: flex; gap: 1px; padding: 2px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); }
+    .langs span { padding: 2px 4px; color: var(--muted); border-radius: 2px; font-size: 8px; }
+    .langs .active { color: var(--button-fg); background: var(--button); }
+    .progress { height: 2px; background: var(--surface); }
+    .progress i { display: block; width: 64%; height: 100%; background: var(--fg); }
+    .tasks { padding: 5px 6px; border-bottom: 1px solid var(--line); }
+    .task { display: grid; grid-template-columns: 9px 1fr; gap: 7px; align-items: center; padding: 4px 5px; color: var(--muted); border-radius: 4px; }
+    .task.running { color: var(--fg); background: var(--surface); }
+    .task-dot { width: 6px; height: 6px; border: 1px solid currentColor; border-radius: 50%; }
+    .task.done .task-dot, .task.running .task-dot { background: currentColor; }
+    .composer { display: grid; gap: 6px; padding: 8px; }
+    .composer textarea { width: 100%; min-height: 48px; resize: none; padding: 7px 8px; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 4px; outline: none; font: inherit; }
+    .action-row { display: flex; justify-content: flex-end; }
+    .send { padding: 6px 9px; color: var(--button-fg); background: var(--button); border: 1px solid var(--button); border-radius: 4px; box-shadow: 0 2px 5px rgba(0,0,0,.12); font-weight: 700; cursor: pointer; }
+    .wishes { display: grid; gap: 3px; }
+    .wish { display: grid; grid-template-columns: 7px 1fr; gap: 6px; align-items: start; padding: 5px 6px; color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: 4px; }
+    .wish i { width: 5px; height: 5px; margin-top: 4px; border-radius: 50%; background: var(--dot); }
+    .wish.sent i { background: #aaa; }
+    .wish span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pace { display: grid; grid-template-columns: auto 1fr auto; gap: 7px; align-items: center; padding: 7px 9px; color: var(--muted); border-top: 1px solid var(--line); font-size: 9px; }
+    .pace input { width: 100%; accent-color: var(--fg); }
+
+    .v1 .stage, .v2 .stage, .v3 .stage, .v4 .stage, .v5 .stage { background-color:#d9d9d6; background-image:none; }
+    .v1 .hud { --bg:#0f1010; --fg:#f2f2f0; --muted:#8b8f8e; --line:#2b2e2e; --surface:#181a1a; --button:#f2f2f0; --button-fg:#0f1010; --dot:#f2f2f0; box-shadow:0 12px 28px rgba(0,0,0,.26); }
+    .v2 .hud { --bg:#161616; --fg:#f5f5f5; --muted:#999; --line:#383838; --surface:#202020; --button:#f5f5f5; --button-fg:#161616; --dot:#f5f5f5; box-shadow:0 12px 28px rgba(0,0,0,.24); }
+    .v3 .hud { --bg:#090a0c; --fg:#e7e8ec; --muted:#838793; --line:#24262d; --surface:#121318; --button:#e7e8ec; --button-fg:#090a0c; --dot:#e7e8ec; box-shadow:0 12px 28px rgba(0,0,0,.3); }
+    .v4 .hud { --bg:#151719; --fg:#eceff1; --muted:#969da3; --line:#34383d; --surface:#202326; --button:#eceff1; --button-fg:#151719; --dot:#eceff1; box-shadow:0 12px 28px rgba(0,0,0,.24); }
+    .v5 .hud { --bg:#121113; --fg:#f1eef2; --muted:#968f99; --line:#302d31; --surface:#1b191c; --button:#f1eef2; --button-fg:#121113; --dot:#f1eef2; box-shadow:0 12px 28px rgba(0,0,0,.26); }
+    .v6 .hud { --bg:#fbfaf7; --fg:#252421; --muted:#77736d; --line:#d9d6cf; --surface:#f2f0eb; --button:#252421; --button-fg:#fbfaf7; --dot:#252421; }
+    .v7 .hud { --bg:#fff; --fg:#171717; --muted:#737373; --line:#e2e2e2; --surface:#f7f7f7; --button:#171717; --button-fg:#fff; --dot:#171717; }
+    .v8 .hud { --bg:#eef0ef; --fg:#202422; --muted:#68706c; --line:#cbd0cd; --surface:#e4e7e5; --button:#202422; --button-fg:#eef0ef; --dot:#202422; }
+    .v9 .hud { --bg:#f2f1ef; --fg:#242321; --muted:#736f69; --line:#cfccc7; --surface:#e7e5e2; --button:#242321; --button-fg:#f2f1ef; --dot:#242321; }
+    .v10 .hud { --bg:#f8f8fa; --fg:#1e1e24; --muted:#70707b; --line:#d9d9df; --surface:#eeeef2; --button:#1e1e24; --button-fg:#f8f8fa; --dot:#1e1e24; }
+
+    .choice { position:fixed; left:50%; bottom:18px; z-index:20; display:flex; align-items:center; gap:10px; padding:8px 10px 8px 12px; color:#fff; background:#161616; border:1px solid #333; border-radius:5px; box-shadow:0 10px 30px rgba(0,0,0,.25); transform:translateX(-50%); font-size:12px; }
+    .choice strong { font-weight:650; }
+    .choice button { padding:6px 9px; color:#111; background:#fff; border:0; border-radius:4px; box-shadow:0 2px 5px rgba(0,0,0,.2); cursor:pointer; }
+    .choice button:disabled { color:#777; background:#ccc; cursor:default; }
+    .toast { position:fixed; right:18px; bottom:18px; padding:9px 11px; color:#fff; background:#111; border-radius:5px; opacity:0; transform:translateY(8px); transition:all 140ms ease; font-size:11px; }
+    .toast.visible { opacity:1; transform:none; }
+    @media (max-width:900px) { .page-head { grid-template-columns:1fr; } .constraints { max-width:none; } .grid { grid-template-columns:1fr; } }
+    @media (max-width:520px) { .page-head { padding:25px 14px 18px; } .grid { padding:0 10px 90px; } .option { padding:8px; } .stage { min-height:430px; padding:20px 6px; } .hud { width:min(320px,100%); } .descriptor { display:none; } }
+  </style>
+</head>
+<body>
+  <header class="page-head">
+    <div>
+      <p class="eyebrow">opencode-browser-cdp / hud study</p>
+      <h1>5 тёмных + 5 светлых тем HUD</h1>
+      <p class="intro">Одна компактная OpenCode-компоновка и десять нейтральных палитр. Нажми на карточку, чтобы выбрать тему. Этот же список будет доступен внутри настоящего HUD и сохранит выбор.</p>
+    </div>
+    <p class="constraints">Палитра: белый, серый, чёрный.<br>Скругление: 4–5 px.<br>Кнопка: контрастная, с лёгкой тенью.<br>Без ярких акцентов и декоративного шума.</p>
+  </header>
+  <main class="grid" id="grid"></main>
+  <div class="choice" aria-live="polite"><span>Выбор: <strong id="selected-name">не выбран</strong></span><button id="copy-choice" disabled>Скопировать</button></div>
+  <div class="toast" id="toast">Название скопировано</div>
+  <script>
+    const variants = [
+      ["Carbon", "тёмная · opencode"],
+      ["Graphite", "тёмная · neutral"],
+      ["Obsidian", "тёмная · cold"],
+      ["Slate", "тёмная · soft"],
+      ["Ink", "тёмная · warm"],
+      ["Paper", "светлая · warm"],
+      ["Porcelain", "светлая · clean"],
+      ["Fog", "светлая · cool"],
+      ["Stone", "светлая · neutral"],
+      ["Pearl", "светлая · soft"],
+    ]
+    const hud = () => `
+      <section class="hud">
+        <header class="hud-head"><span class="brand">opencode / browser</span><span class="langs"><span class="active">RU</span><span>EN</span><span>中文</span></span><span class="count">2/3</span></header>
+        <div class="progress"><i></i></div>
+        <div class="tasks">
+          <div class="task done"><span class="task-dot"></span><span>Открыть каталог</span></div>
+          <div class="task running"><span class="task-dot"></span><span>Выбрать модель</span></div>
+          <div class="task"><span class="task-dot"></span><span>Проверить характеристики</span></div>
+        </div>
+        <div class="composer">
+          <textarea aria-label="Пожелание" placeholder="Доп. пожелание для ИИ…"></textarea>
+          <div class="action-row"><button class="send">Отправить</button></div>
+          <div class="wishes">
+            <div class="wish"><i></i><span>Сравни именно эти комплектации</span></div>
+            <div class="wish sent"><i></i><span>Смотри сюда: Mazda CX-5</span></div>
+          </div>
+        </div>
+        <footer class="pace"><span>Скорость</span><input type="range" value="35" aria-label="Скорость"><span>350 ms</span></footer>
+      </section>`
+    const grid = document.querySelector("#grid")
+    variants.forEach(([name, descriptor], index) => {
+      const article = document.createElement("article")
+      article.className = `option v${index + 1}`
+      article.tabIndex = 0
+      article.dataset.name = `${String(index + 1).padStart(2, "0")} — ${name}`
+      article.innerHTML = `<header class="option-head"><span class="index">${String(index + 1).padStart(2, "0")}</span><h2>${name}</h2><span class="descriptor">${descriptor}</span></header><div class="stage">${hud()}</div>`
+      article.addEventListener("click", (event) => {
+        if (event.target.closest("textarea,input,button")) return
+        select(article)
+      })
+      article.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(article) }
+      })
+      grid.appendChild(article)
+    })
+    const selectedName = document.querySelector("#selected-name")
+    const copyButton = document.querySelector("#copy-choice")
+    const toast = document.querySelector("#toast")
+    let current = null
+    function select(article) {
+      current?.classList.remove("selected")
+      current = article
+      current.classList.add("selected")
+      selectedName.textContent = current.dataset.name
+      copyButton.disabled = false
+      current.scrollIntoView({ block: "nearest", behavior: "smooth" })
+    }
+    copyButton.addEventListener("click", async () => {
+      if (!current) return
+      await navigator.clipboard.writeText(current.dataset.name).catch(() => {})
+      toast.classList.add("visible")
+      setTimeout(() => toast.classList.remove("visible"), 1200)
+    })
+  </script>
+</body>
+</html>

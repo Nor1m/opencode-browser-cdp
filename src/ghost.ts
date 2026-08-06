@@ -39,12 +39,31 @@ export type SignedGhostGuidance = {
   signature: string
 }
 
+export const GHOST_THEME_NAMES = [
+  "carbon",
+  "graphite",
+  "obsidian",
+  "slate",
+  "ink",
+  "paper",
+  "porcelain",
+  "fog",
+  "stone",
+  "pearl",
+] as const
+export type GhostTheme = (typeof GHOST_THEME_NAMES)[number]
+export type GhostThemePreference = { name: GhostTheme; updatedAt: number }
+export const isGhostTheme = (value: unknown): value is GhostTheme =>
+  GHOST_THEME_NAMES.includes(value as GhostTheme)
+
 export type GhostRuntime = {
   owner: string
   mount: () => boolean
   update: (next: GhostUpdate) => Promise<boolean>
   actionDelay: () => number
   guidance: (consume?: boolean) => SignedGhostGuidance | null
+  theme: () => GhostThemePreference
+  setTheme: (preference: GhostThemePreference) => boolean
   restoreFocus: () => boolean
   hide: () => string | null
   show: (visibility: string) => void
@@ -66,6 +85,8 @@ export const GHOST_SOURCE = (config: {
   owner: string
   actionDelay: number
   guidanceSecret: string
+  theme: GhostTheme
+  themeUpdatedAt: number
 }) => {
   if (window !== window.top) return
 
@@ -78,6 +99,13 @@ export const GHOST_SOURCE = (config: {
   type GhostWindow = Window & {
     __ghostDisabled?: boolean
     __opencodeBrowserGhost?: GhostRuntime
+  }
+  type UiLocale = "ru" | "en" | "zh"
+  type GhostWish = {
+    id: number
+    kind: "instruction" | "target"
+    text: string
+    status: "pending" | "sent"
   }
 
   const ghostWindow = window as GhostWindow
@@ -102,45 +130,66 @@ export const GHOST_SOURCE = (config: {
     updatedAt: 0,
   }
   let promptDraft = ""
+  let wishes: GhostWish[] = []
   let storedGuidance: SignedGhostGuidance | null = null
   let cursorPosition: { x: number; y: number } | null = null
   let hudPosition: { x: number; y: number } | null = null
   let mountObserver: MutationObserver | null = null
   let contextCandidate: Element | null = null
 
-  const localizedLabels = () => {
-    const language = (document.documentElement?.lang || navigator.language || "en").toLowerCase()
-    return language.startsWith("ru")
-      ? {
+  const labelSets = {
+    ru: {
         prompt: "Доп. пожелание для ИИ…",
         send: "Отправить пожелание",
-        sent: "Готово для следующего запроса",
-        idle: "Нет пожеланий",
         lookHere: "Смотри сюда",
         pace: "Скорость",
-        taskIdle: "ожидание",
-        }
-      : language.startsWith("zh")
-        ? {
-          prompt: "给 AI 的附加指令…",
-          send: "发送指令",
-          sent: "将在下一次请求中发送",
-          idle: "暂无指令",
-          lookHere: "看这里",
-          pace: "速度",
-          taskIdle: "空闲",
-          }
-        : {
-          prompt: "Additional instruction for AI…",
-          send: "Send instruction",
-          sent: "Ready for the next request",
-          idle: "No guidance",
-          lookHere: "Look here",
-          pace: "Pace",
-          taskIdle: "idle",
-          }
+        theme: "Тема",
+      },
+    en: {
+      prompt: "Additional instruction for AI…",
+      send: "Send instruction",
+      lookHere: "Look here",
+      pace: "Pace",
+      theme: "Theme",
+    },
+    zh: {
+      prompt: "给 AI 的附加指令…",
+      send: "发送指令",
+      lookHere: "看这里",
+      pace: "速度",
+      theme: "主题",
+    },
   }
-  let labels = localizedLabels()
+  const detectLocale = (): UiLocale => {
+    const language = (document.documentElement?.lang || navigator.language || "en").toLowerCase()
+    return language.startsWith("ru") ? "ru" : language.startsWith("zh") ? "zh" : "en"
+  }
+  let uiLocale = detectLocale()
+  let localeExplicit = false
+  let labels = labelSets[uiLocale]
+  const themeSets: Record<GhostTheme, {
+    bg: string
+    fg: string
+    muted: string
+    line: string
+    surface: string
+    button: string
+    buttonFg: string
+    shadow: string
+  }> = {
+    carbon: { bg: "#0f1010", fg: "#f2f2f0", muted: "#8b8f8e", line: "#2b2e2e", surface: "#181a1a", button: "#f2f2f0", buttonFg: "#0f1010", shadow: "0 12px 28px rgba(0,0,0,.26)" },
+    graphite: { bg: "#161616", fg: "#f5f5f5", muted: "#999", line: "#383838", surface: "#202020", button: "#f5f5f5", buttonFg: "#161616", shadow: "0 12px 28px rgba(0,0,0,.24)" },
+    obsidian: { bg: "#090a0c", fg: "#e7e8ec", muted: "#838793", line: "#24262d", surface: "#121318", button: "#e7e8ec", buttonFg: "#090a0c", shadow: "0 12px 28px rgba(0,0,0,.3)" },
+    slate: { bg: "#151719", fg: "#eceff1", muted: "#969da3", line: "#34383d", surface: "#202326", button: "#eceff1", buttonFg: "#151719", shadow: "0 12px 28px rgba(0,0,0,.24)" },
+    ink: { bg: "#121113", fg: "#f1eef2", muted: "#968f99", line: "#302d31", surface: "#1b191c", button: "#f1eef2", buttonFg: "#121113", shadow: "0 12px 28px rgba(0,0,0,.26)" },
+    paper: { bg: "#fbfaf7", fg: "#252421", muted: "#77736d", line: "#d9d6cf", surface: "#f2f0eb", button: "#252421", buttonFg: "#fbfaf7", shadow: "0 10px 26px rgba(0,0,0,.1)" },
+    porcelain: { bg: "#ffffff", fg: "#171717", muted: "#737373", line: "#e2e2e2", surface: "#f7f7f7", button: "#171717", buttonFg: "#ffffff", shadow: "0 10px 26px rgba(0,0,0,.1)" },
+    fog: { bg: "#eef0ef", fg: "#202422", muted: "#68706c", line: "#cbd0cd", surface: "#e4e7e5", button: "#202422", buttonFg: "#eef0ef", shadow: "0 10px 26px rgba(0,0,0,.1)" },
+    stone: { bg: "#f2f1ef", fg: "#242321", muted: "#736f69", line: "#cfccc7", surface: "#e7e5e2", button: "#242321", buttonFg: "#f2f1ef", shadow: "0 10px 26px rgba(0,0,0,.1)" },
+    pearl: { bg: "#f8f8fa", fg: "#1e1e24", muted: "#70707b", line: "#d9d9df", surface: "#eeeef2", button: "#1e1e24", buttonFg: "#f8f8fa", shadow: "0 10px 26px rgba(0,0,0,.1)" },
+  }
+  let uiTheme: GhostTheme = config.theme
+  let themeUpdatedAt = config.themeUpdatedAt
 
   try {
     const stored = JSON.parse(sessionStorage.getItem(storageKey) || "null") as {
@@ -149,6 +198,11 @@ export const GHOST_SOURCE = (config: {
       cursorPosition?: { x: number; y: number }
       hudPosition?: { x: number; y: number }
       promptDraft?: string
+      wishes?: GhostWish[]
+      uiLocale?: UiLocale
+      localeExplicit?: boolean
+      uiTheme?: GhostTheme
+      themeUpdatedAt?: number
       pendingGuidance?: SignedGhostGuidance
     } | null
     if (Array.isArray(stored?.tasks)) tasks = stored.tasks
@@ -162,6 +216,31 @@ export const GHOST_SOURCE = (config: {
       hudPosition = stored?.hudPosition ?? null
     }
     if (typeof stored?.promptDraft === "string") promptDraft = stored.promptDraft.slice(0, 2000)
+    if (Array.isArray(stored?.wishes)) {
+      wishes = stored.wishes
+        .filter((wish) => wish && typeof wish.text === "string")
+        .map((wish, index) => ({
+          id: Number.isFinite(wish.id) ? wish.id : Date.now() + index,
+          kind: wish.kind === "target" ? "target" as const : "instruction" as const,
+          text: wish.text.slice(0, 240),
+          status: wish.status === "pending" ? "pending" as const : "sent" as const,
+        }))
+        .slice(-8)
+    }
+    if (stored?.uiLocale === "ru" || stored?.uiLocale === "en" || stored?.uiLocale === "zh") {
+      uiLocale = stored.uiLocale
+      labels = labelSets[uiLocale]
+      localeExplicit = stored.localeExplicit === true
+    }
+    if (
+      stored?.uiTheme &&
+      Object.prototype.hasOwnProperty.call(themeSets, stored.uiTheme) &&
+      Number.isFinite(stored.themeUpdatedAt) &&
+      Number(stored.themeUpdatedAt) >= themeUpdatedAt
+    ) {
+      uiTheme = stored.uiTheme
+      themeUpdatedAt = Number(stored.themeUpdatedAt)
+    }
     if (
       stored?.pendingGuidance?.guidance &&
       typeof stored.pendingGuidance.signature === "string" &&
@@ -194,6 +273,11 @@ export const GHOST_SOURCE = (config: {
           cursorPosition,
           hudPosition,
           promptDraft,
+          wishes,
+          uiLocale: localeExplicit ? uiLocale : undefined,
+          localeExplicit,
+          uiTheme,
+          themeUpdatedAt,
           pendingGuidance,
         }),
       )
@@ -349,13 +433,13 @@ export const GHOST_SOURCE = (config: {
       root,
       "div",
       "focus",
-      "position:fixed;left:0;top:0;z-index:2;width:0;height:0;opacity:0;border:3px solid #6ee7ff;border-radius:9px;box-shadow:0 0 0 2px rgba(5,13,24,.75),0 0 22px rgba(42,210,255,.65);transform:translate3d(0,0,0);transition:transform 180ms cubic-bezier(.2,.8,.2,1),width 180ms ease,height 180ms ease,opacity 100ms ease;box-sizing:border-box",
+      "position:fixed;left:0;top:0;z-index:2;width:0;height:0;opacity:0;border:2px solid #a3e635;border-radius:6px;box-shadow:0 0 0 2px rgba(0,0,0,.7);transform:translate3d(0,0,0);transition:transform 140ms ease,width 140ms ease,height 140ms ease,opacity 80ms ease;box-sizing:border-box",
     )
     add(
       root,
       "span",
       "focus-label",
-      "position:absolute;left:-2px;bottom:calc(100% + 7px);max-width:280px;padding:5px 8px;overflow:hidden;color:#dffaff;background:#07111f;border:1px solid rgba(110,231,255,.7);border-radius:6px;font:600 11px/1.25 ui-monospace,SFMono-Regular,Consolas,monospace;text-overflow:ellipsis;white-space:nowrap;box-sizing:border-box",
+      "position:absolute;left:-2px;bottom:calc(100% + 6px);max-width:280px;padding:4px 7px;overflow:hidden;color:#f4f4f5;background:#111;border:1px solid #3f3f46;border-radius:5px;font:600 11px/1.25 ui-monospace,SFMono-Regular,Consolas,monospace;text-overflow:ellipsis;white-space:nowrap;box-sizing:border-box",
       focus,
     )
 
@@ -370,8 +454,8 @@ export const GHOST_SOURCE = (config: {
     svg.style.cssText = "display:block;width:100%;height:100%"
     const cursorPath = document.createElementNS("http://www.w3.org/2000/svg", "path")
     cursorPath.setAttribute("d", "M2 1.5 21 17l-8.1 1.2 4.6 8.2-4.2 2.1-4.5-8.2L3 26Z")
-    cursorPath.setAttribute("fill", "#6ee7ff")
-    cursorPath.setAttribute("stroke", "#07111f")
+    cursorPath.setAttribute("fill", "#f4f4f5")
+    cursorPath.setAttribute("stroke", "#111")
     cursorPath.setAttribute("stroke-width", "2")
     cursorPath.setAttribute("stroke-linejoin", "round")
     svg.appendChild(cursorPath)
@@ -381,24 +465,50 @@ export const GHOST_SOURCE = (config: {
       root,
       "aside",
       "hud",
-      "position:fixed;top:16px;right:16px;z-index:3;width:min(350px,calc(100vw - 32px));overflow:hidden;color:#e8f5ff;background:rgba(5,13,24,.92);border:1px solid rgba(110,231,255,.42);border-radius:12px;box-shadow:0 14px 35px rgba(0,0,0,.32);backdrop-filter:blur(12px);font:12px/1.35 ui-monospace,SFMono-Regular,Consolas,monospace;pointer-events:auto;box-sizing:border-box",
+      "position:fixed;top:16px;right:16px;z-index:3;width:min(320px,calc(100vw - 32px));overflow:hidden;color:#e4e4e7;background:#0d0d0d;border:1px solid #27272a;border-radius:5px;box-shadow:0 12px 28px rgba(0,0,0,.35);font:12px/1.35 ui-monospace,SFMono-Regular,Consolas,monospace;pointer-events:auto;box-sizing:border-box",
     )
     const head = add(
       root,
       "div",
       "hud-head",
-      "display:flex;align-items:center;justify-content:space-between;padding:10px 12px 8px;cursor:move;touch-action:none;user-select:none;box-sizing:border-box",
+      "display:flex;align-items:center;gap:8px;padding:8px 9px;cursor:move;touch-action:none;user-select:none;box-sizing:border-box",
       hud,
     )
     const title = add(
       root,
       "span",
       "hud-title",
-      "color:#6ee7ff;font-weight:800;letter-spacing:.04em;text-transform:uppercase",
+      "margin-right:auto;color:#fafafa;font-weight:700;letter-spacing:-.02em",
       head,
     )
-    title.textContent = "OpenCode browser"
-    add(root, "span", "hud-count", "color:#9fb6c8;font-size:11px", head)
+    title.textContent = "opencode / browser"
+    const localeSwitch = add(
+      root,
+      "div",
+      "locale-switch",
+      "display:flex;gap:2px;padding:2px;background:#18181b;border:1px solid #27272a;border-radius:5px;cursor:default",
+      head,
+    )
+    for (const [locale, text] of [["ru", "RU"], ["en", "EN"], ["zh", "中文"]] as const) {
+      const button = document.createElement("button")
+      button.type = "button"
+      button.dataset.locale = locale
+      button.textContent = text
+      button.style.cssText =
+        "padding:2px 5px;color:#71717a;background:transparent;border:0;border-radius:3px;cursor:pointer;font:600 9px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace"
+      button.addEventListener("pointerdown", (event) => event.stopPropagation())
+      button.addEventListener("click", (event) => {
+        if (!event.isTrusted) return
+        uiLocale = locale
+        localeExplicit = true
+        labels = labelSets[uiLocale]
+        save()
+        syncStaticLabels(root)
+        renderWishes(root)
+      })
+      localeSwitch.appendChild(button)
+    }
+    add(root, "span", "hud-count", "display:none;color:#71717a;font-size:10px", head)
     head.addEventListener("pointerdown", (event) => {
       if (event.button !== 0) return
       const rect = hud.getBoundingClientRect()
@@ -423,26 +533,26 @@ export const GHOST_SOURCE = (config: {
       head.addEventListener("pointerup", stop)
       head.addEventListener("pointercancel", stop)
     })
-    const progress = add(root, "div", "progress", "height:3px;background:rgba(255,255,255,.1)", hud)
+    const progress = add(root, "div", "progress", "height:2px;background:#18181b", hud)
     add(
       root,
       "i",
       "progress-bar",
-      "display:block;height:100%;width:0;background:linear-gradient(90deg,#22d3ee,#a3e635);transition:width 180ms ease",
+      "display:block;height:100%;width:0;background:#a3e635;transition:width 140ms ease",
       progress,
     )
     add(
       root,
       "div",
       "tasks",
-      "display:grid;gap:1px;padding:5px 6px 7px;max-height:280px;overflow:hidden;box-sizing:border-box",
+      "display:grid;gap:1px;padding:4px 6px;max-height:220px;overflow:hidden;box-sizing:border-box",
       hud,
     )
     const guidancePanel = add(
       root,
       "div",
       "guidance",
-      "display:grid;gap:7px;padding:9px 10px;border-top:1px solid rgba(255,255,255,.08);box-sizing:border-box",
+      "display:grid;gap:6px;padding:8px;border-top:1px solid #27272a;box-sizing:border-box",
       hud,
     )
     const prompt = document.createElement("textarea")
@@ -451,7 +561,7 @@ export const GHOST_SOURCE = (config: {
     prompt.maxLength = 2000
     prompt.placeholder = labels.prompt
     prompt.style.cssText =
-      "width:100%;min-height:48px;max-height:120px;resize:vertical;padding:7px 8px;color:#e8f5ff;background:rgba(255,255,255,.06);border:1px solid rgba(110,231,255,.28);border-radius:7px;outline:none;font:12px/1.35 ui-monospace,SFMono-Regular,Consolas,monospace;box-sizing:border-box"
+      "width:100%;min-height:44px;max-height:100px;resize:vertical;padding:7px 8px;color:#e4e4e7;background:#18181b;border:1px solid #27272a;border-radius:5px;outline:none;font:12px/1.35 ui-monospace,SFMono-Regular,Consolas,monospace;box-sizing:border-box"
     prompt.addEventListener("input", () => {
       promptDraft = prompt.value.slice(0, 2000)
       save()
@@ -463,14 +573,26 @@ export const GHOST_SOURCE = (config: {
     send.type = "button"
     send.textContent = labels.send
     send.style.cssText =
-      "padding:6px 9px;color:#07111f;background:#67e8f9;border:0;border-radius:7px;cursor:pointer;font:700 11px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace"
+      "margin-left:auto;padding:6px 9px;color:#0d0d0d;background:#f4f4f5;border:0;border-radius:5px;cursor:pointer;font:700 11px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace"
     send.addEventListener("click", (event) => {
       if (!event.isTrusted) return
       const instruction = prompt.value.trim()
       if (!instruction) return
+      wishes = [
+        ...wishes,
+        {
+          id: Date.now(),
+          kind: "instruction",
+          text: instruction.slice(0, 240),
+          status: "pending",
+        } as GhostWish,
+      ].slice(-8)
+      const pendingInstructions = wishes
+        .filter((wish) => wish.kind === "instruction" && wish.status === "pending")
+        .map((wish) => wish.text)
       guidance = {
         ...guidance,
-        instruction,
+        instruction: pendingInstructions.join("\n"),
         url: location.href,
         title: document.title,
         updatedAt: Date.now(),
@@ -480,17 +602,58 @@ export const GHOST_SOURCE = (config: {
       save()
       syncGuidance(root)
     })
-    const guidanceStatus = document.createElement("span")
-    guidanceStatus.id = "guidance-status"
-    guidanceStatus.style.cssText =
-      "min-width:0;overflow:hidden;color:#9fb6c8;font-size:10px;text-overflow:ellipsis;white-space:nowrap"
-    guidanceActions.append(send, guidanceStatus)
-    guidancePanel.append(prompt, guidanceActions)
+    guidanceActions.append(send)
+    const wishesElement = document.createElement("div")
+    wishesElement.id = "wishes"
+    wishesElement.style.cssText = "display:none;gap:3px"
+    guidancePanel.append(prompt, guidanceActions, wishesElement)
+    const themeSettings = add(
+      root,
+      "label",
+      "theme-row",
+      "display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:center;padding:7px 9px;border-top:1px solid #27272a;box-sizing:border-box",
+      hud,
+    )
+    const themeLabel = document.createElement("span")
+    themeLabel.id = "theme-label"
+    const themeSelect = document.createElement("select")
+    themeSelect.id = "theme-select"
+    themeSelect.style.cssText =
+      "min-width:0;width:100%;padding:4px 6px;border:1px solid;border-radius:4px;outline:none;font:10px/1.3 ui-monospace,SFMono-Regular,Consolas,monospace"
+    const themeNames: Array<[GhostTheme, string]> = [
+      ["carbon", "Carbon · dark"],
+      ["graphite", "Graphite · dark"],
+      ["obsidian", "Obsidian · dark"],
+      ["slate", "Slate · dark"],
+      ["ink", "Ink · dark"],
+      ["paper", "Paper · light"],
+      ["porcelain", "Porcelain · light"],
+      ["fog", "Fog · light"],
+      ["stone", "Stone · light"],
+      ["pearl", "Pearl · light"],
+    ]
+    for (const [value, text] of themeNames) {
+      const option = document.createElement("option")
+      option.value = value
+      option.textContent = text
+      themeSelect.appendChild(option)
+    }
+    themeSelect.value = uiTheme
+    themeSelect.addEventListener("change", () => {
+      if (!Object.prototype.hasOwnProperty.call(themeSets, themeSelect.value)) return
+      uiTheme = themeSelect.value as GhostTheme
+      themeUpdatedAt = Date.now()
+      save()
+      applyTheme(root)
+      renderTasks(root)
+      renderWishes(root)
+    })
+    themeSettings.append(themeLabel, themeSelect)
     const settings = add(
       root,
       "label",
       "pace",
-      "display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;padding:8px 12px 10px;color:#9fb6c8;border-top:1px solid rgba(255,255,255,.08);pointer-events:auto;box-sizing:border-box",
+      "display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;padding:7px 9px;color:#71717a;border-top:1px solid #27272a;pointer-events:auto;box-sizing:border-box",
       hud,
     )
     const paceLabel = document.createElement("span")
@@ -502,11 +665,11 @@ export const GHOST_SOURCE = (config: {
     slider.max = "2000"
     slider.step = "50"
     slider.value = String(actionDelay)
-    slider.style.cssText = "width:100%;accent-color:#22d3ee;cursor:pointer"
+    slider.style.cssText = "width:100%;accent-color:#a3e635;cursor:pointer"
     const paceValue = document.createElement("output")
     paceValue.id = "pace-value"
     paceValue.textContent = `${slider.value} ms`
-    paceValue.style.cssText = "min-width:58px;text-align:right;color:#dffaff"
+    paceValue.style.cssText = "min-width:58px;text-align:right;color:#a1a1aa"
     slider.addEventListener("input", () => {
       actionDelay = Number(slider.value)
       paceValue.textContent = `${slider.value} ms`
@@ -522,16 +685,16 @@ export const GHOST_SOURCE = (config: {
       root,
       "div",
       "context-menu",
-      "display:none;position:fixed;left:0;top:0;z-index:4;padding:5px;color:#e8f5ff;background:rgba(5,13,24,.97);border:1px solid rgba(110,231,255,.48);border-radius:9px;box-shadow:0 12px 30px rgba(0,0,0,.38);pointer-events:auto;box-sizing:border-box",
+      "display:none;position:fixed;left:0;top:0;z-index:4;padding:4px;color:#e4e4e7;background:#0d0d0d;border:1px solid #3f3f46;border-radius:6px;box-shadow:0 10px 24px rgba(0,0,0,.4);pointer-events:auto;box-sizing:border-box",
     )
     const lookHere = document.createElement("button")
     lookHere.id = "context-look-here"
     lookHere.type = "button"
     lookHere.textContent = labels.lookHere
     lookHere.style.cssText =
-      "display:block;width:100%;padding:7px 11px;color:#dffaff;background:transparent;border:0;border-radius:6px;cursor:pointer;text-align:left;font:700 12px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:nowrap"
+      "display:block;width:100%;padding:6px 9px;color:#e4e4e7;background:transparent;border:0;border-radius:4px;cursor:pointer;text-align:left;font:600 12px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:nowrap"
     lookHere.addEventListener("pointerenter", () => {
-      lookHere.style.background = "rgba(103,232,249,.14)"
+      lookHere.style.background = themeSets[uiTheme].surface
     })
     lookHere.addEventListener("pointerleave", () => {
       lookHere.style.background = "transparent"
@@ -607,26 +770,82 @@ export const GHOST_SOURCE = (config: {
     host.__opencodeFocusCleanup = () => document.removeEventListener("focusin", trackPageFocus, true)
   }
 
+  const applyTheme = (root: ShadowRoot) => {
+    const palette = themeSets[uiTheme]
+    const hud = root.getElementById("hud") as HTMLElement
+    hud.style.color = palette.fg
+    hud.style.background = palette.bg
+    hud.style.borderColor = palette.line
+    hud.style.boxShadow = palette.shadow
+    ;(root.getElementById("hud-title") as HTMLElement).style.color = palette.fg
+    ;(root.getElementById("hud-count") as HTMLElement).style.color = palette.muted
+    const localeSwitch = root.getElementById("locale-switch") as HTMLElement
+    localeSwitch.style.background = palette.surface
+    localeSwitch.style.borderColor = palette.line
+    const progress = root.getElementById("progress") as HTMLElement
+    progress.style.background = palette.surface
+    ;(root.getElementById("progress-bar") as HTMLElement).style.background = palette.fg
+    for (const id of ["tasks", "guidance", "theme-row", "pace"]) {
+      const element = root.getElementById(id) as HTMLElement | null
+      if (element) element.style.borderColor = palette.line
+    }
+    const prompt = root.getElementById("guidance-prompt") as HTMLTextAreaElement
+    prompt.style.color = palette.fg
+    prompt.style.background = palette.surface
+    prompt.style.borderColor = palette.line
+    const send = root.getElementById("send-guidance") as HTMLButtonElement
+    send.style.color = palette.buttonFg
+    send.style.background = palette.button
+    send.style.borderColor = palette.button
+    const themeLabel = root.getElementById("theme-label") as HTMLElement
+    themeLabel.style.color = palette.muted
+    const themeSelect = root.getElementById("theme-select") as HTMLSelectElement
+    themeSelect.value = uiTheme
+    themeSelect.style.color = palette.fg
+    themeSelect.style.background = palette.surface
+    themeSelect.style.borderColor = palette.line
+    const pace = root.getElementById("pace") as HTMLElement
+    pace.style.color = palette.muted
+    ;(root.getElementById("pace-value") as HTMLElement).style.color = palette.muted
+    ;(root.getElementById("pace-slider") as HTMLInputElement).style.accentColor = palette.fg
+    const menu = root.getElementById("context-menu") as HTMLElement
+    menu.style.color = palette.fg
+    menu.style.background = palette.bg
+    menu.style.borderColor = palette.line
+    ;(root.getElementById("context-look-here") as HTMLButtonElement).style.color = palette.fg
+    const focus = root.getElementById("focus") as HTMLElement
+    focus.style.borderColor = palette.fg
+    focus.style.boxShadow = `0 0 0 2px ${palette.bg}`
+    const focusLabel = root.getElementById("focus-label") as HTMLElement
+    focusLabel.style.color = palette.fg
+    focusLabel.style.background = palette.bg
+    focusLabel.style.borderColor = palette.line
+    const cursorPath = root.querySelector("#cursor path") as SVGPathElement | null
+    cursorPath?.setAttribute("fill", palette.fg)
+    cursorPath?.setAttribute("stroke", palette.bg)
+    syncStaticLabels(root)
+  }
+
   const renderTasks = (root: ShadowRoot) => {
     const tasksElement = root.getElementById("tasks") as HTMLElement
     tasksElement.replaceChildren()
+    const palette = themeSets[uiTheme]
     const colors: Record<GhostTaskStatus, string> = {
-      queued: "#64748b",
-      running: "#67e8f9",
-      done: "#a3e635",
-      failed: "#fb7185",
+      queued: palette.muted,
+      running: palette.fg,
+      done: palette.muted,
+      failed: palette.fg,
     }
     for (const task of tasks) {
       const row = document.createElement("div")
       row.dataset.status = task.status
       row.style.cssText =
-        "display:grid;grid-template-columns:14px 1fr;gap:7px;align-items:start;padding:6px;border-radius:7px;box-sizing:border-box"
-      if (task.status === "running") row.style.background = "rgba(34,211,238,.11)"
-      row.style.color = task.status === "done" ? "#9fb6c8" : colors[task.status]
+        "display:grid;grid-template-columns:14px 1fr;gap:7px;align-items:start;padding:6px;border-radius:5px;box-sizing:border-box"
+      if (task.status === "running") row.style.background = palette.surface
+      row.style.color = colors[task.status]
       const dot = document.createElement("span")
       dot.style.cssText = `width:8px;height:8px;margin-top:4px;border:1px solid ${colors[task.status]};border-radius:50%;box-sizing:border-box`
       if (task.status !== "queued") dot.style.background = colors[task.status]
-      if (task.status === "running") dot.style.boxShadow = "0 0 9px #22d3ee"
       const label = document.createElement("span")
       label.style.cssText = "overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
       label.textContent = task.label
@@ -635,18 +854,57 @@ export const GHOST_SOURCE = (config: {
     }
     const complete = tasks.filter((task) => task.status === "done" || task.status === "failed").length
     const count = root.getElementById("hud-count") as HTMLElement
-    count.textContent = tasks.length > 0 ? `${complete}/${tasks.length}` : labels.taskIdle
+    count.textContent = tasks.length > 0 ? `${complete}/${tasks.length}` : ""
+    count.style.display = tasks.length > 0 ? "inline" : "none"
     const bar = root.getElementById("progress-bar") as HTMLElement
     bar.style.width = tasks.length > 0 ? `${Math.round((complete / tasks.length) * 100)}%` : "0%"
   }
 
+  const renderWishes = (root: ShadowRoot) => {
+    const element = root.getElementById("wishes") as HTMLElement | null
+    if (!element) return
+    element.replaceChildren()
+    element.style.display = wishes.length > 0 ? "grid" : "none"
+    const palette = themeSets[uiTheme]
+    for (const wish of wishes) {
+      const row = document.createElement("div")
+      row.dataset.status = wish.status
+      row.style.cssText =
+        `display:grid;grid-template-columns:7px 1fr;gap:6px;align-items:start;padding:5px 6px;color:${palette.muted};background:${palette.surface};border:1px solid ${palette.line};border-radius:5px;box-sizing:border-box`
+      const dot = document.createElement("span")
+      dot.style.cssText = `width:6px;height:6px;margin-top:4px;border-radius:50%;background:${wish.status === "pending" ? palette.fg : palette.muted}`
+      const text = document.createElement("span")
+      text.style.cssText = "overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+      text.textContent = wish.text
+      row.append(dot, text)
+      element.appendChild(row)
+    }
+  }
+
+  const syncStaticLabels = (root: ShadowRoot) => {
+    const prompt = root.getElementById("guidance-prompt") as HTMLTextAreaElement | null
+    const send = root.getElementById("send-guidance") as HTMLButtonElement | null
+    const pace = root.querySelector("#pace > span") as HTMLElement | null
+    const themeLabel = root.getElementById("theme-label") as HTMLElement | null
+    const lookHere = root.getElementById("context-look-here") as HTMLButtonElement | null
+    if (prompt) prompt.placeholder = labels.prompt
+    if (send) send.textContent = labels.send
+    if (pace) pace.textContent = labels.pace
+    if (themeLabel) themeLabel.textContent = labels.theme
+    if (lookHere) lookHere.textContent = labels.lookHere
+    for (const button of root.querySelectorAll<HTMLButtonElement>("#locale-switch [data-locale]")) {
+      const active = button.dataset.locale === uiLocale
+      const palette = themeSets[uiTheme]
+      button.setAttribute("aria-pressed", String(active))
+      button.style.color = active ? palette.buttonFg : palette.muted
+      button.style.background = active ? palette.button : "transparent"
+    }
+  }
+
   const syncGuidance = (root: ShadowRoot) => {
     const prompt = root.getElementById("guidance-prompt") as HTMLTextAreaElement | null
-    const status = root.getElementById("guidance-status") as HTMLElement | null
     if (prompt && root.activeElement !== prompt) prompt.value = promptDraft
-    if (status) {
-      status.textContent = guidance.target?.selector || (guidance.instruction ? labels.sent : labels.idle)
-    }
+    renderWishes(root)
   }
 
   const showCursorAt = (root: ShadowRoot, x: number, y: number, persist = false) => {
@@ -708,6 +966,15 @@ export const GHOST_SOURCE = (config: {
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, 1000)
+    wishes = [
+      ...wishes,
+      {
+        id: Date.now(),
+        kind: "target",
+        text: `${labels.lookHere}: ${text || selector}`.slice(0, 240),
+        status: "pending",
+      } as GhostWish,
+    ].slice(-8)
     guidance = {
       instruction: guidance.instruction,
       target: {
@@ -745,7 +1012,10 @@ export const GHOST_SOURCE = (config: {
       return false
     }
 
-    labels = localizedLabels()
+    if (!localeExplicit) {
+      uiLocale = detectLocale()
+      labels = labelSets[uiLocale]
+    }
     let host = findHost()
     if (!host) {
       host = document.createElement("div") as GhostHost
@@ -773,6 +1043,7 @@ export const GHOST_SOURCE = (config: {
     const paceValue = root.getElementById("pace-value") as HTMLOutputElement
     slider.value = String(actionDelay)
     paceValue.textContent = `${slider.value} ms`
+    applyTheme(root)
     renderTasks(root)
     syncGuidance(root)
     showCursorAt(
@@ -873,6 +1144,9 @@ export const GHOST_SOURCE = (config: {
       }
       const result = { guidance: value, signature: signGuidance(value) }
       if (consume) {
+        wishes = wishes.map((wish) =>
+          wish.status === "pending" ? { ...wish, status: "sent" as const } : wish,
+        )
         guidance = {
           instruction: "",
           url: location.href,
@@ -885,6 +1159,24 @@ export const GHOST_SOURCE = (config: {
         save()
       }
       return result
+    },
+    theme: () => ({ name: uiTheme, updatedAt: themeUpdatedAt }),
+    setTheme: (preference) => {
+      if (
+        !Object.prototype.hasOwnProperty.call(themeSets, preference.name) ||
+        !Number.isFinite(preference.updatedAt) ||
+        preference.updatedAt < themeUpdatedAt
+      ) return false
+      uiTheme = preference.name
+      themeUpdatedAt = preference.updatedAt
+      save()
+      const root = findHost()?.shadowRoot
+      if (root) {
+        applyTheme(root)
+        renderTasks(root)
+        renderWishes(root)
+      }
+      return true
     },
     restoreFocus: () => {
       const host = findHost()
