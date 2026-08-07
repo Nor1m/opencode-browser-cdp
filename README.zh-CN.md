@@ -2,7 +2,8 @@
 
 [English](README.md) | [Русский](README.ru.md) | [中文](README.zh-CN.md)
 
-[![license](https://img.shields.io/github/license/Nor1m/opencode-browser-cdp)](LICENSE)
+[![license](https://img.shields.io/github/license/Nor1m/opencode-browser-cdp)](LICENSE) [![README views](https://hits.sh/github.com/Nor1m/opencode-browser-cdp.svg?label=README%20views&color=blue)](https://hits.sh/github.com/Nor1m/opencode-browser-cdp)
+<!-- README view tracking: badge increments on every HTML view. -->
 
 通过持久化 Puppeteer CDP 连接为 OpenCode 提供快速浏览器自动化。插件控制真实的
 Chromium 窗口，并添加一个 **`browser`** 工具。

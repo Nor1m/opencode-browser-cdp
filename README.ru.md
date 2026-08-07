@@ -2,7 +2,8 @@
 
 [English](README.md) | [Русский](README.ru.md) | [中文](README.zh-CN.md)
 
-[![license](https://img.shields.io/github/license/Nor1m/opencode-browser-cdp)](LICENSE)
+[![license](https://img.shields.io/github/license/Nor1m/opencode-browser-cdp)](LICENSE) [![README views](https://hits.sh/github.com/Nor1m/opencode-browser-cdp.svg?label=README%20views&color=blue)](https://hits.sh/github.com/Nor1m/opencode-browser-cdp)
+<!-- README view tracking: badge increments on every HTML view. -->
 
 ![Автоматическое заполнение формы с живым HUD](assets/browser-demo.gif)
 
