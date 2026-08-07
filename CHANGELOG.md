@@ -1,7 +1,20 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 - 2026-08-07
 
+- Queue HUD guidance as a per-target FIFO so each instruction keeps its own page
+  element and is consumed independently, oldest first.
+- Add a `wait_guidance` browser action that long-polls until a new HUD instruction
+  lands, waking the model without a separate chat message.
+- Autonomously inject idle HUD instructions into the session via `promptAsync`, driven
+  by `session.idle` and a 300ms poll, so the model can react right after its reply
+  without the user typing in chat.
+- Interrupt a stale browser action with pending guidance, return the guidance in the
+  tool result, and resume the interrupted plan unless the instruction cancels it.
+- Clear the injected right-click focus ring on a left pointer-down.
+- Rework the HUD task stack: newest tasks first, finished tasks faded with a checkmark
+  (`✓`/`✕`), a per-task remove button, a scrollable list, and a live progress bar.
+- Soften HUD internal borders and remove the header task counter.
 - Register the visual runtime once per managed target with CDP
   `Page.addScriptToEvaluateOnNewDocument` instead of reinjecting the full UI per action.
 - Restore HUD tasks and pace across same-origin navigations through `sessionStorage`.
