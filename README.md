@@ -3,9 +3,8 @@
 [English](README.md) | [Русский](README.ru.md) | [中文](README.zh-CN.md)
 
 [![license](https://img.shields.io/github/license/Nor1m/opencode-browser-cdp)](LICENSE)
-<!-- README view tracking: invisible pixel + live counter badge. -->
-<img src="https://api.countapi.xyz/hit/nor1m/opencode-browser-cdp" width="1" height="1" alt="" />
-![README views](https://img.shields.io/endpoint?url=https%3A%2F%2Fapi.countapi.xyz%2Finfo%2Fnor1m%2Fopencode-browser-cdp&color=blue&label=README%20views)
+<!-- README view tracking: badge increments on every HTML view. -->
+![README views](https://hits.sh/github.com/Nor1m/opencode-browser-cdp.svg?label=README%20views&color=blue)
 
 Fast browser automation for OpenCode through a persistent Puppeteer CDP connection.
 It controls a real Chromium window and adds one tool: **`browser`**.
